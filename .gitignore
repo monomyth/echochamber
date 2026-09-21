@@ -1,0 +1,6 @@
+/target
+/config.toml
+*.srt
+*.ass
+echochamber_live.*
+.DS_Store
