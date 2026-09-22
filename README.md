@@ -20,7 +20,23 @@ RTMP is just the usual way OBS sends a live stream to a server.
 
 ## Start it
 
-In this folder:
+One line. This installs Rust's build of echochamber onto your PATH, usually `~/.cargo/bin`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/monomyth/echochamber/master/install.sh | sh
+```
+
+Then, in the folder where you want the settings file:
+
+```bash
+echochamber init && echochamber serve
+```
+
+`init` creates `config.toml`. That file is where settings and stream keys go. It is ignored by git, so keys are not committed by accident. `init` will not overwrite a `config.toml` that is already there.
+
+`serve` starts the program and leaves it running. Leave that terminal open.
+
+Already cloned this repo? From this folder, `sh install.sh` does the same install. Or build it here and skip installing:
 
 ```bash
 cargo build --release
@@ -28,9 +44,7 @@ cargo build --release
 ./target/release/echochamber serve
 ```
 
-`init` creates `config.toml`. That file is where settings and stream keys go. It is ignored by git, so keys are not committed by accident. `init` will not overwrite a `config.toml` that is already there.
-
-`serve` starts the program and leaves it running. Leave that terminal open.
+The commands further down use `./target/release/echochamber`. After the one-line install, type `echochamber` instead.
 
 ## Point OBS at it
 
