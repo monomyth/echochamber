@@ -128,10 +128,6 @@ async fn main() -> Result<()> {
         Cmd::Push { url, name } => {
             let (cfg, _) = Config::discover(cli.config.as_deref())
                 .unwrap_or_else(|_| (Config::default(), PathBuf::from("config.toml")));
-            if cfg.configured_destinations().is_empty() && name.is_none() {
-                // Match original: push with no platforms configured is an error unless daemon is in relay
-                // and we still allow ad-hoc URLs. Keep a clear message if url missing — url is required.
-            }
             let addr = cli
                 .control
                 .clone()

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Local RTMP relay with multi-destination FFmpeg push and live Whisper subtitles"
 license = "MIT"
+repository = "https://github.com/monomyth/echochamber"
 
 [dependencies]
 anyhow = "1"
