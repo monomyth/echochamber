@@ -15,6 +15,32 @@ fn free_port() -> u16 {
         .port()
 }
 
+/// Set keys inside the `[standby]` table. Other sections also use `enabled`.
+fn set_standby(text: &str, pairs: &[(&str, &str)]) -> String {
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let start = lines
+        .iter()
+        .position(|l| l.trim() == "[standby]")
+        .expect("[standby]");
+    let end = lines
+        .iter()
+        .skip(start + 1)
+        .position(|l| l.starts_with('['))
+        .map(|i| start + 1 + i)
+        .unwrap_or(lines.len());
+    for line in &mut lines[start..end] {
+        let trimmed = line.trim().to_string();
+        for (key, value) in pairs {
+            if trimmed.starts_with(&format!("{key} ")) || trimmed.starts_with(&format!("{key}=")) {
+                *line = format!("{key} = {value}");
+            }
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
 fn ffmpeg() -> bool {
     std::process::Command::new("ffmpeg")
         .arg("-version")
@@ -493,21 +519,23 @@ async fn standby_loops_to_file_dest_without_publisher() {
     let http_port = free_port();
     text = text.replace("127.0.0.1:1935", &format!("127.0.0.1:{rtmp_port}"));
     text = text.replace("127.0.0.1:8080", &format!("127.0.0.1:{http_port}"));
-    text = text.replace(
-        "enabled = false\nafter_first_publish = true",
-        "enabled = true\nafter_first_publish = false",
+    text = set_standby(
+        &text,
+        &[
+            ("enabled", "true"),
+            ("after_first_publish", "false"),
+            ("video", &format!("\"{}\"", clip.display())),
+            ("audio", "\"\""),
+            ("width", "320"),
+            ("height", "240"),
+            ("fps", "15"),
+            ("delay_secs", "0"),
+        ],
     );
-    text = text.replace(
-        "video = \"assets/standby.mp4\"",
-        &format!("video = \"{}\"", clip.display()),
-    );
-    text = text.replace("audio = \"assets/standby.m4a\"", "audio = \"\"");
-    text = text.replace("width = 1920", "width = 320");
-    text = text.replace("height = 1080", "height = 240");
-    text = text.replace("fps = 30", "fps = 15");
-    text = text.replace("delay_secs = 2", "delay_secs = 0");
     std::fs::write(&cfg_path, text).unwrap();
     let cfg = Config::load_from_path(&cfg_path).unwrap();
+    assert!(cfg.standby.enabled, "standby was not turned on");
+    assert!(!cfg.standby.after_first_publish);
 
     let serve = tokio::spawn(echochamber::daemon::serve(cfg, cfg_path.clone()));
     tokio::time::sleep(Duration::from_millis(400)).await;
@@ -557,4 +585,199 @@ async fn standby_loops_to_file_dest_without_publisher() {
         "standby dest flv too small: {n}\nstatus={last_status}\nvideo={}",
         clip.display()
     );
+}
+
+/// The waiting video stays off until the first publish, plays after that
+/// publish ends, and stops again when OBS comes back.
+#[tokio::test]
+async fn standby_follows_the_publisher() {
+    if !ffmpeg() {
+        eprintln!("skip: ffmpeg not installed");
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let clip = dir.path().join("slate.mp4");
+    let made = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=160x120:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=220:sample_rate=48000",
+            "-t",
+            "1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-y",
+            clip.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(made.success(), "failed to make slate fixture");
+
+    let cfg_path = dir.path().join("config.toml");
+    write_init_template(&cfg_path).unwrap();
+    let mut text = std::fs::read_to_string(&cfg_path).unwrap();
+    let rtmp_port = free_port();
+    let http_port = free_port();
+    text = text.replace("127.0.0.1:1935", &format!("127.0.0.1:{rtmp_port}"));
+    text = text.replace("127.0.0.1:8080", &format!("127.0.0.1:{http_port}"));
+    text = set_standby(
+        &text,
+        &[
+            ("enabled", "true"),
+            ("after_first_publish", "true"),
+            ("video", &format!("\"{}\"", clip.display())),
+            ("audio", "\"\""),
+            ("width", "320"),
+            ("height", "240"),
+            ("fps", "15"),
+            ("delay_secs", "0"),
+        ],
+    );
+    std::fs::write(&cfg_path, text).unwrap();
+    let cfg = Config::load_from_path(&cfg_path).unwrap();
+    assert!(cfg.standby.enabled && cfg.standby.after_first_publish);
+
+    let serve = tokio::spawn(echochamber::daemon::serve(cfg, cfg_path.clone()));
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let out = dir.path().join("out.flv");
+    let client = reqwest::Client::new();
+    let status_url = format!("http://127.0.0.1:{http_port}/status");
+    let added = client
+        .post(format!("http://127.0.0.1:{http_port}/push"))
+        .json(&serde_json::json!({ "url": out.to_str().unwrap(), "name": "file" }))
+        .send()
+        .await
+        .unwrap();
+    assert!(added.status().is_success(), "push dest failed");
+
+    let early = wait_status(&client, &status_url, Duration::from_millis(1200), |_| false).await;
+    let early_v: serde_json::Value = serde_json::from_str(&early).unwrap_or(serde_json::json!({}));
+    assert_eq!(
+        early_v["ingest"]["standby"].as_bool(),
+        Some(false),
+        "waiting video started before the first publish\n{early}"
+    );
+
+    let url = format!("rtmp://127.0.0.1:{rtmp_port}/echochamber/live");
+    let publish = |seconds: &str| {
+        tokio::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-re",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=320x240:rate=15",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-g",
+                "15",
+                "-c:a",
+                "aac",
+                "-t",
+                seconds,
+                "-shortest",
+                "-f",
+                "flv",
+                &url,
+            ])
+            .kill_on_drop(true)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+
+    let mut first = publish("2");
+    let _ = tokio::time::timeout(Duration::from_secs(10), first.wait()).await;
+    let _ = first.start_kill();
+
+    let during = wait_status(&client, &status_url, Duration::from_secs(10), |v| {
+        v["ingest"]["standby"].as_bool() == Some(true)
+            && v["pushers"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|p| p["bytes_out"].as_u64())
+                .unwrap_or(0)
+                > 2000
+    })
+    .await;
+    let during_v: serde_json::Value = serde_json::from_str(&during).unwrap_or(serde_json::json!({}));
+    assert_eq!(
+        during_v["ingest"]["standby"].as_bool(),
+        Some(true),
+        "waiting video did not start after the publish ended\n{during}"
+    );
+
+    let mut second = publish("6");
+    let back = wait_status(&client, &status_url, Duration::from_secs(10), |v| {
+        v["ingest"]["publishing"].as_bool() == Some(true)
+            && v["ingest"]["standby"].as_bool() == Some(false)
+            && v["pushers"].as_array().is_some_and(|a| {
+                a.iter().any(|p| p["state"].as_str() == Some("running"))
+            })
+    })
+    .await;
+    let _ = second.start_kill();
+    let back_v: serde_json::Value = serde_json::from_str(&back).unwrap_or(serde_json::json!({}));
+    assert_eq!(
+        back_v["ingest"]["standby"].as_bool(),
+        Some(false),
+        "waiting video kept playing after OBS returned\n{back}"
+    );
+    assert_eq!(
+        back_v["ingest"]["publishing"].as_bool(),
+        Some(true),
+        "OBS was not seen as publishing\n{back}"
+    );
+
+    let _ = client
+        .post(format!("http://127.0.0.1:{http_port}/stop"))
+        .send()
+        .await;
+    let _ = tokio::time::timeout(Duration::from_secs(5), serve).await;
+}
+
+async fn wait_status(
+    client: &reqwest::Client,
+    url: &str,
+    limit: Duration,
+    done: impl Fn(&serde_json::Value) -> bool,
+) -> String {
+    let deadline = tokio::time::Instant::now() + limit;
+    let mut last = String::new();
+    while tokio::time::Instant::now() < deadline {
+        if let Ok(resp) = client.get(url).send().await {
+            last = resp.text().await.unwrap_or_default();
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&last) {
+                if done(&v) {
+                    return last;
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    last
 }

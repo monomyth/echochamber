@@ -311,6 +311,19 @@ fn rewrite_bind_host(bind: &str, host: &str) -> Result<String> {
     }
 }
 
+fn destination_line(label: &str, platform: Option<(bool, &str)>, url: Option<String>) -> String {
+    let pad = format!("{label:<19}");
+    match url {
+        Some(u) => format!("{pad}{}", crate::redact::redact_url(&u)),
+        None => match platform {
+            Some((true, key)) if key.trim().is_empty() => {
+                format!("{pad}enabled, but stream_key is empty")
+            }
+            _ => format!("{pad}(disabled)"),
+        },
+    }
+}
+
 fn client_dial_bind(bind: &str) -> String {
     match bind.parse::<SocketAddr>() {
         Ok(addr) if addr.ip().is_unspecified() => {
@@ -514,27 +527,24 @@ impl Config {
             format!("control.bind       {}", self.control.bind),
             format!("local play/publish {}", self.local_rtmp_url()),
         ];
-        match self.youtube_publish_url() {
-            Some(u) => lines.push(format!(
-                "youtube            {}",
-                crate::redact::redact_url(&u)
-            )),
-            None => lines.push("youtube            (disabled)".into()),
-        }
-        match self.x_publish_url() {
-            Some(u) => lines.push(format!(
-                "x                  {}",
-                crate::redact::redact_url(&u)
-            )),
-            None => lines.push("x                  (disabled)".into()),
-        }
-        match self.twitch_publish_url() {
-            Some(u) => lines.push(format!(
-                "twitch             {}",
-                crate::redact::redact_url(&u)
-            )),
-            None => lines.push("twitch             (disabled)".into()),
-        }
+        lines.push(destination_line(
+            "youtube",
+            self.platforms.youtube.as_ref().map(|p| (p.enabled, p.stream_key.as_str())),
+            self.youtube_publish_url(),
+        ));
+        lines.push(destination_line(
+            "x",
+            self.platforms.x.as_ref().map(|p| (p.enabled, p.stream_key.as_str())),
+            self.x_publish_url(),
+        ));
+        lines.push(destination_line(
+            "twitch",
+            self.platforms
+                .twitch
+                .as_ref()
+                .map(|p| (p.enabled, p.stream_key.as_str())),
+            self.twitch_publish_url(),
+        ));
         lines.push(format!(
             "subtitles          enabled={} burn_in={} sidecar={} lang={} style={:?}",
             self.subtitles.enabled,
@@ -771,6 +781,41 @@ bind = "127.0.0.1:1935"
             "rtmp://127.0.0.1:1935/echochamber/live"
         );
         assert_eq!(cfg.local_rtmp_tc_url(), "rtmp://127.0.0.1:1935/echochamber");
+    }
+
+    #[test]
+    fn enabled_platform_without_a_key_is_not_called_disabled() {
+        let cfg: Config = toml::from_str(
+            r#"
+[platforms.youtube]
+enabled = true
+stream_key = ""
+
+[platforms.x]
+enabled = false
+stream_key = "xkey9999"
+"#,
+        )
+        .unwrap();
+        let summary = cfg.masked_summary();
+        assert!(
+            summary.contains("youtube            enabled, but stream_key is empty"),
+            "{summary}"
+        );
+        assert!(summary.contains("x                  (disabled)"), "{summary}");
+        assert!(cfg.configured_destinations().is_empty());
+    }
+
+    #[test]
+    fn standby_video_resolves_beside_the_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let clip = dir.path().join("wait.mp4");
+        std::fs::write(&clip, b"not a real mp4").unwrap();
+        let cfg_path = dir.path().join("mine.toml");
+        let mut standby = StandbyConfig::default();
+        standby.video = "wait.mp4".into();
+        assert!(standby.resolve_video(Path::new("config.toml")).is_none());
+        assert_eq!(standby.resolve_video(&cfg_path).unwrap(), clip);
     }
 
     #[test]

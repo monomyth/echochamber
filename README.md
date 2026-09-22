@@ -91,7 +91,7 @@ Save the file, then tell the running program to read it again. OBS can keep stre
 ./target/release/echochamber reload
 ```
 
-`validate` checks that the file makes sense before you reload it. `status` should then show each site you enabled as `"state": "running"`.
+`validate` checks the file before you reload it. It fails if a site is turned on with no stream key, if captions are on and the Whisper model file is missing, or if the waiting video is on and its file cannot be found. `status` should then show each site you enabled as `"state": "running"`.
 
 By default the video is **copied**, not recompressed. If OBS is sending 1080p, viewers get 1080p. If OBS is sending a larger picture, that larger picture is what goes out. To make this program recompress instead, set this in `config.toml`:
 

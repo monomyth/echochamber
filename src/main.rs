@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
         Cmd::Validate { verbose } => {
             let (cfg, path) = Config::discover(cli.config.as_deref())?;
             println!("config             {}", path.display());
-            echochamber::validate::run(&cfg, verbose)
+            echochamber::validate::run(&cfg, &path, verbose)
         }
         Cmd::Serve {
             host,
