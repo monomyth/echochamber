@@ -8,7 +8,7 @@ use echochamber::config::{self, Config};
 #[derive(Parser)]
 #[command(
     name = "echochamber",
-    about = "Local RTMP relay with multi-destination push and live subtitles"
+    about = "Send one live stream to YouTube, X, and Twitch"
 )]
 struct Cli {
     /// Config file (overrides ECHOCHAMBER_CONFIG / ./config.toml / ~/.config/echochamber/config.toml)

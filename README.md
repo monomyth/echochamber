@@ -1,27 +1,26 @@
-<p align="center">
-  <img src="assets/standby.jpg" alt="A dim control room: a red velvet chair, a warm desk lamp, and a patch bay of glowing meters." width="880">
-</p>
+# echochamber
 
-<h1 align="center">echochamber</h1>
+<img src="assets/standby.jpg" alt="A dark control room with a red chair and a warm lamp. This is the waiting video." width="880">
 
-<p align="center">
-  Publish once. Show up on YouTube, X, and Twitch.<br>
-  When you step away, the room above keeps your place.
-</p>
+You stream from OBS to **one** place: this program, running on your computer. It sends that same live video to YouTube, X, and Twitch.
 
-<p align="center">
-  <a href="assets/standby.mp4">Play the standby loop</a>
-  &nbsp;·&nbsp;
-  <a href="LICENSE">MIT</a>
-</p>
+If OBS stops, viewers do not get a dead stream. They see the waiting video above, with its music, until you start OBS again. Then your show comes straight back.
 
-OBS (or ffmpeg) publishes a single RTMP stream to your machine. echochamber copies it out to every destination you turned on. Stop publishing and those destinations switch to one shared slate. Publish again and the slate is gone.
+The waiting video is included. [Play it](assets/standby.mp4).
 
-No accounts are required to try the relay. Keys are only needed when you want a real platform on the other end.
+You do not need a YouTube, X, or Twitch account to try the program. You only need those keys when you want the stream to actually appear on a site.
 
-## Run it
+## What you need
 
-You need [Rust](https://rustup.rs) and `ffmpeg` on your `PATH`.
+- [Rust](https://rustup.rs), so the program can be built
+- [ffmpeg](https://ffmpeg.org), so the video can be sent onward
+- OBS, or any other program that can send RTMP
+
+RTMP is just the usual way OBS sends a live stream to a server.
+
+## Start it
+
+In this folder:
 
 ```bash
 cargo build --release
@@ -29,18 +28,30 @@ cargo build --release
 ./target/release/echochamber serve
 ```
 
-`init` writes `config.toml` in the current directory. Stream keys live there. The file is gitignored, so a later commit will not pick it up.
+`init` creates `config.toml`. That file is where settings and stream keys go. It is ignored by git, so keys are not committed by accident. `init` will not overwrite a `config.toml` that is already there.
 
-In OBS:
+`serve` starts the program and leaves it running. Leave that terminal open.
 
-| | |
+## Point OBS at it
+
+| OBS field | Value |
 |---|---|
 | Server | `rtmp://127.0.0.1:1935/echochamber` |
 | Stream key | `live` |
 
-Leave `/live` off the server URL. The key belongs in the stream-key field. If a URL does end in `/live`, echochamber still accepts it.
+`127.0.0.1` means "this computer." Port `1935` is the standard RTMP port.
 
-A picture from ffmpeg, with nobody watching yet:
+Put `live` in the stream key box. Do not stick `/live` on the end of the server address. If you do, it still works. The cleaner split is the one in the table.
+
+Press **Start Streaming** in OBS. Nothing is on YouTube yet. The video is only arriving on your own machine. That is enough to confirm the program is receiving it:
+
+```bash
+./target/release/echochamber status
+```
+
+Look for `"publishing": true`.
+
+To test without OBS, send a test picture:
 
 ```bash
 ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=30 \
@@ -49,60 +60,64 @@ ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=30 \
   -f flv rtmp://127.0.0.1:1935/echochamber/live
 ```
 
-Another machine on the LAN can publish too:
+## Send it to a website
 
-```bash
-./target/release/echochamber serve --host 0.0.0.0
-```
-
-That listens on every interface. The ports stay the ones in `config.toml` (1935 for RTMP, 8080 for control).
-
-## Send it somewhere
-
-Turn a platform on and paste its stream key.
+Open `config.toml`. Each site is off until you set `enabled = true` and paste that site's stream key.
 
 ```toml
 [platforms.youtube]
 enabled = true
-stream_key = "YOUR_YOUTUBE_KEY"
+stream_key = "paste the YouTube key here"
 
 [platforms.x]
 enabled = true
-stream_key = "YOUR_X_KEY"
+stream_key = "paste the X key here"
 
 [platforms.twitch]
 enabled = true
-stream_key = "YOUR_TWITCH_KEY"
+stream_key = "paste the Twitch key here"
 ```
 
-- **YouTube** — [YouTube Studio](https://studio.youtube.com) → Go live → Stream key
-- **X** — [studio.x.com/producer](https://studio.x.com/producer) → Create Source → RTMP key. After the encoder connects, create a broadcast and go live, or the ingest stays empty on the timeline.
-- **Twitch** — [Creator Dashboard → Stream](https://www.twitch.tv/dashboard/settings/stream) → Primary Stream key
+Where to copy the key from:
 
-Apply it without dropping OBS:
+- **YouTube:** [YouTube Studio](https://studio.youtube.com) → Go live → Stream key
+- **X:** [studio.x.com/producer](https://studio.x.com/producer) → create an RTMP source → copy the key. X has one more step: after this program connects, open Broadcasts, create a broadcast, and go live. Until you do that, X accepts the video but does not show it.
+- **Twitch:** [Dashboard → Settings → Stream](https://www.twitch.tv/dashboard/settings/stream) → Primary Stream Key
+
+Save the file, then tell the running program to read it again. OBS can keep streaming.
 
 ```bash
 ./target/release/echochamber validate
 ./target/release/echochamber reload
 ```
 
-`reload` rereads `config.toml`. Replacing the binary needs `stop`, then `serve` again.
+`validate` checks that the file makes sense before you reload it. `status` should then show each site you enabled as `"state": "running"`.
 
-`quality.mode` defaults to `copy`. A 2K picture stays 2K, and each destination gets its own ffmpeg so one platform dying does not take the others down. Set `mode = "reencode"` when you want libx264 (`preset`, `crf`) instead of a straight copy.
+By default the video is **copied**, not recompressed. If OBS is sending 1080p, viewers get 1080p. If OBS is sending a larger picture, that larger picture is what goes out. To make this program recompress instead, set this in `config.toml`:
 
-One extra destination, without editing the file:
-
-```bash
-./target/release/echochamber push --url rtmp://host/app/key
+```toml
+[quality]
+mode = "reencode"   # copy is the default and uses much less CPU
 ```
 
-## Standby
+`reload` only rereads the config. If you build a new version of the program, stop it and start it again:
 
-<p align="center">
-  <img src="assets/standby.jpg" alt="The same control room, waiting." width="640">
-</p>
+```bash
+./target/release/echochamber stop
+./target/release/echochamber serve
+```
 
-The loop in this repo is [`assets/standby.mp4`](assets/standby.mp4), with [`assets/standby.m4a`](assets/standby.m4a) underneath it. While it is on, every destination shares **one** 1080p encode. Three platforms do not mean three encodes.
+To add one extra destination without editing the file:
+
+```bash
+./target/release/echochamber push --url rtmp://example.com/app/stream-key
+```
+
+That extra destination lasts until you stop the program.
+
+## The waiting video
+
+It is off until you turn it on.
 
 ```toml
 [standby]
@@ -116,53 +131,67 @@ fps = 30
 delay_secs = 2
 ```
 
-`after_first_publish` keeps the slate off until you have been live once. It covers a dropout, not the minutes before the show. `delay_secs` is how long echochamber waits after the publish drops, so a short hitch does not flash the slate. Point `video` and `audio` at your own files to replace the ones shipped here. `audio` may be empty; the picture then goes out in silence.
+| Setting | What it does |
+|---|---|
+| `enabled` | `true` shows the waiting video while OBS is not streaming. |
+| `after_first_publish` | `true` waits until you have gone live once. The video then covers a dropout, not the time before the show starts. `false` also shows it before the first stream. |
+| `video` | The looping picture. The one in this repo is fine. Use another file if you want. |
+| `audio` | The looping music. Leave it empty for silence. |
+| `width`, `height`, `fps` | Size of the **waiting** video only. Your live OBS stream is not resized. |
+| `delay_secs` | How many seconds to wait after OBS stops. A two-second hiccup then does not flash the waiting video. |
 
-`reload` picks up a new path or size. `echochamber status` reports it as `ingest.standby`.
+All three sites share that one waiting video. It is not encoded three times.
 
-## Subtitles
+Change the file or the size, run `reload`, and the next dropout uses the new one. `status` shows `"standby": true` while it is on screen.
 
-Optional, and off until you turn them on. ffmpeg lifts a few seconds of audio off the local stream, [whisper.cpp](https://github.com/ggml-org/whisper.cpp) writes the words, and cues land in `echochamber_live.srt` and `echochamber_live.ass` beside the process.
+## From another computer on your network
+
+By default only programs on this computer can connect. To let OBS on another machine on the same network connect:
+
+```bash
+./target/release/echochamber serve --host 0.0.0.0
+```
+
+In OBS on that other machine, replace `127.0.0.1` with this computer's address, for example `rtmp://192.168.1.20:1935/echochamber`. The stream key is still `live`.
+
+## Captions, if you want them
+
+Off by default. This uses [whisper.cpp](https://github.com/ggml-org/whisper.cpp) to turn speech into subtitles while you are live.
 
 ```toml
 [subtitles]
 enabled = true
-language = "auto"          # auto | en | ru
+language = "auto"          # auto, en, or ru
 whisper_model = "/path/to/ggml-small.bin"
-sidecar = true
-burn_in = false            # needs ffmpeg built with libass
-style = "modern"           # modern | minimal | broadcast
+sidecar = true             # write subtitle files next to the program
+burn_in = false            # true stamps words onto the video itself
+style = "modern"           # modern, minimal, or broadcast
 ```
 
-Burn-in looks for the `ass` or `subtitles` filter. Homebrew's stock ffmpeg often lacks it. Point `ECHOCHAMBER_FFMPEG_BIN` at a build that has libass, or leave `burn_in` false and use the sidecar files.
-
-## How a frame moves
-
-```mermaid
-flowchart LR
-  OBS["OBS or ffmpeg"] --> EC["echochamber"]
-  EC --> YT["YouTube"]
-  EC --> X["X"]
-  EC --> TW["Twitch"]
-```
-
-The ingest is a local RTMP server. Each destination is an ffmpeg process reading that server back. Copy mode remuxes. Standby mode replaces those processes with a single encode of the slate, fanned out to the same places. A new publish tears the slate down and waits until the old processes have released the destination before opening a new one.
+`sidecar` writes `echochamber_live.srt` and `echochamber_live.ass`. Those are separate subtitle files. `burn_in` paints the words into the video, which needs a copy of ffmpeg built with libass. The ffmpeg from Homebrew usually cannot do that. Leave `burn_in` false unless you have one that can, and point `ECHOCHAMBER_FFMPEG_BIN` at it.
 
 ## Commands
 
+Run these from the same folder, in another terminal, while `serve` is running.
+
 | Command | What it does |
 |---|---|
-| `init` | Write a commented `config.toml`. Refuses to overwrite. |
-| `validate` | Check the config, ffmpeg, and whisper. `--verbose` prints the ffmpeg arguments with keys masked. |
-| `serve` | Run the relay. `--host 0.0.0.0` opens RTMP and control on every interface. |
-| `status` | Pretty-printed JSON from the control server. |
-| `reload` | Reread `config.toml`. |
-| `stop` | Ask the daemon to exit. |
-| `push --url` | Add a temporary RTMP destination. |
+| `init` | Create `config.toml`. |
+| `serve` | Run the program. |
+| `status` | Show what is happening, as JSON. |
+| `validate` | Check `config.toml` and that ffmpeg is installed. Add `--verbose` to see the ffmpeg command, with stream keys hidden. |
+| `reload` | Read `config.toml` again. |
+| `stop` | Quit the program. |
+| `push --url ...` | Send the stream to one more address, until you quit. |
 
-Config is found in this order: `--config`, `$ECHOCHAMBER_CONFIG`, `./config.toml`, then `~/.config/echochamber/config.toml`.
+The program looks for its config in this order:
 
-`status` is the whole story in one document. Rates are bits per second over about a second. `stream_key` is masked.
+1. `--config path/to/file.toml`
+2. the `ECHOCHAMBER_CONFIG` environment variable
+3. `./config.toml`
+4. `~/.config/echochamber/config.toml`
+
+`status` looks like this. `bps` is bits per second, a measure of how much video is moving. The stream key is shown with most characters hidden.
 
 ```json
 {
@@ -174,15 +203,17 @@ Config is found in this order: `--config`, `$ECHOCHAMBER_CONFIG`, `./config.toml
 }
 ```
 
-The control server speaks the same thing over HTTP. Default bind is `127.0.0.1:8080`.
+`publishing` means OBS is connected. `standby` means viewers are seeing the waiting video. `ingest_bps` is video coming in from OBS. `push_bps` is video going out to the sites.
 
-| | |
+The same actions exist as HTTP on port 8080, on this computer only, unless you changed the bind address. You can ignore these if the commands above are enough.
+
+| Request | Same as |
 |---|---|
-| `GET /status` | Same JSON as `status` |
-| `POST /reload` | Same as `reload` |
-| `POST /stop` | Same as `stop` |
-| `POST /push` | JSON body `{ "url", "name?" }` |
+| `GET /status` | `status` |
+| `POST /reload` | `reload` |
+| `POST /stop` | `stop` |
+| `POST /push` with `{"url": "..."}` | `push --url` |
 
 ## License
 
-[MIT](LICENSE). The standby picture and loop ship with the repo and you can use them with it.
+[MIT](LICENSE). The waiting video and its music are part of this repo. You can use them with it.

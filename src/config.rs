@@ -586,88 +586,98 @@ pub fn write_init_template(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub const INIT_TEMPLATE: &str = r#"# echochamber — local RTMP relay + multi-destination pusher
+pub const INIT_TEMPLATE: &str = r#"# echochamber
 #
-# OBS:
-#   Server:     rtmp://127.0.0.1:1935/echochamber
-#   Stream key: (the ingest.stream_key below, default "live")
+# OBS sends one stream here. This program forwards it to YouTube, X, and Twitch.
 #
-# Config discovery (first match wins):
+# OBS settings:
+#   Server:      rtmp://127.0.0.1:1935/echochamber
+#   Stream key:  live
+#
+# The program reads the first config file it finds:
 #   --config PATH
 #   $ECHOCHAMBER_CONFIG
 #   ./config.toml
 #   ~/.config/echochamber/config.toml
 #
-# Optional binaries:
-#   ECHOCHAMBER_FFMPEG_BIN   ffmpeg with libass if you want burn_in=true
-#   ECHOCHAMBER_WHISPER_BIN  whisper.cpp CLI (whisper-cli)
+# Optional programs, if the normal ones on your PATH are not the ones you want:
+#   ECHOCHAMBER_FFMPEG_BIN    ffmpeg (needed with libass only if burn_in is true)
+#   ECHOCHAMBER_WHISPER_BIN   whisper.cpp's whisper-cli, for live captions
 
 [ingest]
-# Loopback by default. LAN: bind = "0.0.0.0:1935" or `serve --host 0.0.0.0`
+# Where OBS connects. This computer only.
+# Another machine on your network: bind = "0.0.0.0:1935"
+# or start with: echochamber serve --host 0.0.0.0
 bind = "127.0.0.1:1935"
 app = "echochamber"
+# Must match the stream key typed into OBS.
 stream_key = "live"
 
 [control]
-# HTTP control plane used by `echochamber status|reload|stop|push`
-# Override for this process: `serve --control-bind 0.0.0.0:8080`
+# Local web address used by: status, reload, stop, push
+# Open it on the network for this run with: serve --control-bind 0.0.0.0:8080
 bind = "127.0.0.1:8080"
 
 [platforms.youtube]
 enabled = false
-# From YouTube Studio → Go live → Stream key
+# YouTube Studio → Go live → Stream key
 stream_key = ""
 # ingest_base = "rtmp://a.rtmp.youtube.com/live2"
-# Optional live-caption API (not required for RTMP push):
+# Not used for sending video. Only for a YouTube captions API, if you add one later.
 # client_id = ""
 # client_secret = ""
 # refresh_token = ""
 
 [platforms.x]
 enabled = false
-# From studio.x.com/producer → Create Source → RTMP(s) stream key
+# studio.x.com/producer → create an RTMP source → copy the key
+# After this program connects, also create a broadcast in X and go live.
 stream_key = ""
 # ingest_base = "rtmp://va.pscp.tv:80/x"
 
 [platforms.twitch]
 enabled = false
-# From twitch.tv/dashboard/settings/stream → Primary Stream Key
+# twitch.tv → Creator Dashboard → Settings → Stream → Primary Stream Key
 stream_key = ""
 # ingest_base = "rtmp://live.twitch.tv/app"
 # ingest_base = "rtmps://live.twitch.tv:443/app"
 
 [subtitles]
 enabled = false
-# auto | en | ru
+# auto, en, or ru
 language = "auto"
-# Burn captions into the pushed video. Requires ffmpeg with ass/subtitles
-# (Homebrew's stock ffmpeg often lacks libass — set ECHOCHAMBER_FFMPEG_BIN
-# to a homebrew-ffmpeg build, or keep burn_in=false and use sidecar files).
+# true paints words onto the picture. Needs ffmpeg built with libass.
+# The usual Homebrew ffmpeg cannot do this. Leave false and use the subtitle files.
 burn_in = false
+# true writes echochamber_live.srt and echochamber_live.ass next to the program.
 sidecar = true
-# modern | minimal | broadcast
+# modern, minimal, or broadcast
 style = "modern"
-# Path to a whisper.cpp model, e.g. ggml-base.bin / ggml-small.bin
+# Path to a whisper.cpp model file, such as ggml-small.bin
 whisper_model = ""
+# Seconds of speech sent to Whisper at a time.
 chunk_seconds = 8
 
 [quality]
-# copy = remux, no re-encode (lowest CPU). reencode = libx264.
+# copy sends OBS's picture through unchanged. reencode compresses it again with libx264.
 mode = "copy"
 preset = "veryfast"
 crf = 23
 
 [standby]
-# Off by default. When enabled, dests loop `video` while waiting for OBS
-# (after a drop if after_first_publish=true; also before first go-live if false).
+# true shows the waiting video while OBS is not streaming.
 enabled = false
+# true waits until you have gone live once, then covers a dropout.
+# false also shows the waiting video before the first stream.
 after_first_publish = true
-# Custom looping clip (+ optional audio). Re-encoded on the fly to width/height/fps.
+# Looping picture, and optional music. Leave audio empty for silence.
+# Both are resized to width x height at fps. Your live stream is not resized.
 video = "assets/standby.mp4"
 audio = "assets/standby.m4a"
 width = 1920
 height = 1080
 fps = 30
+# Seconds to wait after OBS stops, so a short glitch does not flash the waiting video.
 delay_secs = 2
 "#;
 
