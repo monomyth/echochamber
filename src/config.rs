@@ -596,6 +596,61 @@ pub fn write_init_template(path: &Path) -> Result<()> {
     Ok(())
 }
 
+const STANDBY_MP4: &[u8] = include_bytes!("../assets/standby.mp4");
+const STANDBY_M4A: &[u8] = include_bytes!("../assets/standby.m4a");
+
+#[derive(Debug, Clone)]
+pub struct InitReport {
+    pub config_written: bool,
+    pub assets: Vec<AssetWrite>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssetWrite {
+    pub path: PathBuf,
+    pub wrote: bool,
+}
+
+/// Write `config.toml` if it is missing, and the standby video next to it.
+/// An existing config or an existing video is left alone.
+pub fn init_at(path: &Path) -> Result<InitReport> {
+    let config_written = match write_init_template(path) {
+        Ok(()) => true,
+        Err(_) if path.is_file() => false,
+        Err(e) => return Err(e),
+    };
+    let assets = install_standby_assets(path)?;
+    Ok(InitReport {
+        config_written,
+        assets,
+    })
+}
+
+pub fn install_standby_assets(config_path: &Path) -> Result<Vec<AssetWrite>> {
+    let parent = config_path.parent().filter(|p| !p.as_os_str().is_empty());
+    let dir = parent.unwrap_or_else(|| Path::new("."));
+    let assets = dir.join("assets");
+    fs::create_dir_all(&assets)?;
+    let mut out = Vec::new();
+    out.push(write_if_missing(&assets.join("standby.mp4"), STANDBY_MP4)?);
+    out.push(write_if_missing(&assets.join("standby.m4a"), STANDBY_M4A)?);
+    Ok(out)
+}
+
+fn write_if_missing(path: &Path, bytes: &[u8]) -> Result<AssetWrite> {
+    if path.exists() {
+        return Ok(AssetWrite {
+            path: path.to_path_buf(),
+            wrote: false,
+        });
+    }
+    fs::write(path, bytes)?;
+    Ok(AssetWrite {
+        path: path.to_path_buf(),
+        wrote: true,
+    })
+}
+
 pub const INIT_TEMPLATE: &str = r#"# echochamber
 #
 # OBS sends one stream here. This program forwards it to YouTube, X, and Twitch.
@@ -694,6 +749,25 @@ delay_secs = 2
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn init_fills_in_a_missing_standby_video_without_replacing_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("config.toml");
+        fs::write(&cfg, "already here").unwrap();
+        let report = init_at(&cfg).unwrap();
+        assert!(!report.config_written);
+        assert_eq!(fs::read_to_string(&cfg).unwrap(), "already here");
+        assert!(report.assets.iter().all(|a| a.wrote));
+        let video = dir.path().join("assets/standby.mp4");
+        let audio = dir.path().join("assets/standby.m4a");
+        let video_len = video.metadata().unwrap().len();
+        assert!(video_len > 1_000_000);
+        assert!(audio.metadata().unwrap().len() > 1_000);
+        let again = init_at(&cfg).unwrap();
+        assert!(again.assets.iter().all(|a| !a.wrote));
+        assert_eq!(video.metadata().unwrap().len(), video_len);
+    }
 
     #[test]
     fn youtube_and_x_urls() {

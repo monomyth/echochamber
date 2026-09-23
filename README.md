@@ -32,7 +32,7 @@ Then, in the folder where you want the settings file:
 echochamber init && echochamber serve
 ```
 
-`init` creates `config.toml`. That file is where settings and stream keys go. It is ignored by git, so keys are not committed by accident. `init` will not overwrite a `config.toml` that is already there.
+`init` creates `config.toml` and copies the waiting video to `assets/standby.mp4` and `assets/standby.m4a` beside it. Settings and stream keys go in `config.toml`. That file is gitignored, so keys are not committed by accident. `init` will not overwrite a config or a video that is already there. Run it again after installing the program on another machine: the config stays, and any missing waiting video is filled in.
 
 `serve` starts the program and leaves it running. Leave that terminal open.
 
@@ -190,7 +190,7 @@ Run these from the same folder, in another terminal, while `serve` is running.
 
 | Command | What it does |
 |---|---|
-| `init` | Create `config.toml`. |
+| `init` | Create `config.toml` and the waiting video beside it. |
 | `serve` | Run the program. |
 | `status` | Show what is happening, as JSON. |
 | `validate` | Check `config.toml` and that ffmpeg is installed. Add `--verbose` to see the ffmpeg command, with stream keys hidden. |

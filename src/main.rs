@@ -23,7 +23,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Write a commented config.toml
+    /// Write config.toml and the standby video next to it
     Init {
         #[arg(long, default_value = "config.toml")]
         path: PathBuf,
@@ -73,8 +73,19 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Init { path } => {
-            config::write_init_template(&path)?;
-            println!("wrote {}", path.display());
+            let report = config::init_at(&path)?;
+            if report.config_written {
+                println!("wrote {}", path.display());
+            } else {
+                println!("{} already exists — left it in place", path.display());
+            }
+            for asset in report.assets {
+                if asset.wrote {
+                    println!("wrote {}", asset.path.display());
+                } else {
+                    println!("{} already exists — left it in place", asset.path.display());
+                }
+            }
             Ok(())
         }
         Cmd::Validate { verbose } => {
