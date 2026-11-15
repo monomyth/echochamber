@@ -1,9 +1,13 @@
-//! Ephemeral relays. Hetzner is the default cloud, Lightsail is the second,
-//! and `local` runs the relay on this machine. The streaming path is unchanged.
+//! Ephemeral relays. Hetzner, Lightsail, EC2, Compute Engine, and this computer.
+//! The streaming path is unchanged.
 
+mod awsutil;
 mod cloud_init;
+mod credentials;
+mod ec2;
 mod error;
 mod factory;
+mod gcp;
 mod health;
 mod hetzner;
 mod lightsail;
@@ -14,6 +18,7 @@ mod provider;
 mod service;
 mod store;
 
+pub use credentials::{CredentialFields, RequestCredentials};
 pub use error::DeployError;
 pub use mock::{FixedFactory, MockEndpoint, MockEvent, MockProvider};
 pub use model::{

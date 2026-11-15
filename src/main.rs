@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
-use clap::{Parser, Subcommand};
+use anyhow::{bail, Context, Result};
+use clap::{Args, Parser, Subcommand};
 
 use echochamber::config::{self, Config};
 
@@ -60,10 +60,10 @@ enum Cmd {
     },
     /// Provision one ephemeral relay and print its ingest URL when it is ready
     Deploy {
-        /// hetzner, aws-lightsail, or local
+        /// hetzner, aws-lightsail, aws-ec2, gcp, or local
         #[arg(long)]
         provider: String,
-        /// Hetzner location (fsn1) or Lightsail region (us-east-1)
+        /// Hetzner location, AWS region, or GCP region
         #[arg(long, default_value = "")]
         region: String,
         #[arg(long)]
@@ -88,6 +88,8 @@ enum Cmd {
         ingest_cidr: String,
         #[arg(long, default_value_t = echochamber::deploy::DEFAULT_READY_TIMEOUT)]
         ready_timeout_secs: u64,
+        #[command(flatten)]
+        creds: CloudCreds,
     },
     /// List relays this machine has provisioned
     Deployments {
@@ -98,6 +100,8 @@ enum Cmd {
     Teardown {
         #[arg(long)]
         id: String,
+        #[command(flatten)]
+        creds: CloudCreds,
     },
     /// Delete labeled relays past their deadline, or already stopped
     Reap {
@@ -107,6 +111,8 @@ enum Cmd {
         region: String,
         #[arg(long)]
         dry_run: bool,
+        #[command(flatten)]
+        creds: CloudCreds,
     },
     /// Print cloud-init for the Hetzner or Lightsail console. Contains a stream key.
     CloudInit {
@@ -235,7 +241,9 @@ async fn main() -> Result<()> {
             connect_grace_secs,
             ingest_cidr,
             ready_timeout_secs,
+            creds,
         } => {
+            let fields = load_creds(creds)?;
             let request = echochamber::deploy::DeployRequest {
                 provider: provider.parse()?,
                 region,
@@ -249,6 +257,11 @@ async fn main() -> Result<()> {
                 connect_grace_secs,
                 ingest_cidr,
                 ready_timeout_secs,
+                aws_access_key_id: fields.aws_access_key_id,
+                aws_secret_access_key: fields.aws_secret_access_key,
+                aws_session_token: fields.aws_session_token,
+                gcp_service_account_json: fields.gcp_service_account_json,
+                project: fields.project,
             };
             let record = echochamber::deploy::DeployService::from_env()
                 .deploy(request, seed)
@@ -265,9 +278,9 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
-        Cmd::Teardown { id } => {
+        Cmd::Teardown { id, creds } => {
             let record = echochamber::deploy::DeployService::from_env()
-                .teardown(&id)
+                .teardown(&id, load_creds(creds)?)
                 .await?;
             println!("{}", serde_json::to_string_pretty(&record)?);
             Ok(())
@@ -276,12 +289,19 @@ async fn main() -> Result<()> {
             provider,
             region,
             dry_run,
+            creds,
         } => {
+            let fields = load_creds(creds)?;
             let report = echochamber::deploy::DeployService::from_env()
                 .reap(echochamber::deploy::ReapRequest {
                     provider: provider.parse()?,
                     region,
                     dry_run,
+                    aws_access_key_id: fields.aws_access_key_id,
+                    aws_secret_access_key: fields.aws_secret_access_key,
+                    aws_session_token: fields.aws_session_token,
+                    gcp_service_account_json: fields.gcp_service_account_json,
+                    project: fields.project,
                 })
                 .await?;
             println!("{}", serde_json::to_string_pretty(&report)?);
@@ -300,11 +320,13 @@ async fn main() -> Result<()> {
         } => {
             let kind: echochamber::deploy::ProviderKind = provider.parse()?;
             match kind {
-                echochamber::deploy::ProviderKind::Hetzner
-                | echochamber::deploy::ProviderKind::AwsLightsail => {}
                 echochamber::deploy::ProviderKind::Local => {
-                    bail!("cloud-init is for hetzner and aws-lightsail");
+                    bail!("cloud-init is for a cloud provider");
                 }
+                echochamber::deploy::ProviderKind::Hetzner
+                | echochamber::deploy::ProviderKind::AwsLightsail
+                | echochamber::deploy::ProviderKind::AwsEc2
+                | echochamber::deploy::ProviderKind::Gcp => {}
             }
             let stream_key = format!("{:016x}{:016x}", rand_u64(), rand_u64());
             let token = format!(
@@ -339,6 +361,41 @@ async fn main() -> Result<()> {
             Ok(())
         }
     }
+}
+
+#[derive(Args, Clone, Default)]
+struct CloudCreds {
+    /// AWS access key from this device. Omit to use the SDK default chain.
+    #[arg(long)]
+    aws_access_key_id: Option<String>,
+    /// AWS secret key. Sent with the access key. Not written to the deployment store.
+    #[arg(long)]
+    aws_secret_access_key: Option<String>,
+    #[arg(long)]
+    aws_session_token: Option<String>,
+    /// GCP service-account JSON file on this device. Not copied into the store.
+    #[arg(long)]
+    gcp_service_account_file: Option<PathBuf>,
+    /// GCP project. Overrides the project_id inside the service-account JSON.
+    #[arg(long)]
+    project: Option<String>,
+}
+
+fn load_creds(creds: CloudCreds) -> Result<echochamber::deploy::CredentialFields> {
+    let gcp_service_account_json = match &creds.gcp_service_account_file {
+        Some(path) => Some(
+            std::fs::read_to_string(path)
+                .with_context(|| format!("reading GCP service account file {}", path.display()))?,
+        ),
+        None => None,
+    };
+    Ok(echochamber::deploy::CredentialFields {
+        aws_access_key_id: creds.aws_access_key_id,
+        aws_secret_access_key: creds.aws_secret_access_key,
+        aws_session_token: creds.aws_session_token,
+        gcp_service_account_json,
+        project: creds.project,
+    })
 }
 
 fn rand_u64() -> u64 {

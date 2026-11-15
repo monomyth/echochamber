@@ -1,0 +1,31 @@
+{
+  "title": "Echochamber relay deployer",
+  "description": "Create and delete labeled ephemeral echochamber Compute Engine relays and their firewalls.",
+  "stage": "GA",
+  "includedPermissions": [
+    "compute.instances.create",
+    "compute.instances.delete",
+    "compute.instances.get",
+    "compute.instances.list",
+    "compute.instances.setLabels",
+    "compute.instances.setMetadata",
+    "compute.instances.setServiceAccount",
+    "compute.instances.setTags",
+    "compute.disks.create",
+    "compute.disks.setLabels",
+    "compute.subnetworks.use",
+    "compute.subnetworks.useExternalIp",
+    "compute.networks.use",
+    "compute.networks.useExternalIp",
+    "compute.images.useReadOnly",
+    "compute.images.get",
+    "compute.zoneOperations.get",
+    "compute.globalOperations.get",
+    "compute.firewalls.create",
+    "compute.firewalls.delete",
+    "compute.firewalls.get",
+    "compute.firewalls.list",
+    "compute.firewalls.update",
+    "compute.projects.get"
+  ]
+}

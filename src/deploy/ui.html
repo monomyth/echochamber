@@ -27,12 +27,14 @@
 <main>
   <h1>Deploy a relay</h1>
   <p>One temporary echochamber per stream. Hetzner is the cheap path. Lightsail is the fast snapshot path. This computer is free, and the stream dies if the link or the machine does.</p>
-  <p class="warn">Cloud credentials stay on this machine. This page never asks for them. A cloud deploy spends money. Leave this tab open; a fresh image can take several minutes, a snapshot usually less.</p>
+  <p class="warn">This page uses credentials already on this machine. A phone sends its own keys with each request and they are not saved here. A cloud deploy spends money. Leave this tab open; a fresh image can take several minutes, a snapshot usually less.</p>
 
   <form id="deploy">
     <label for="provider">Provider</label>
     <select id="provider" name="provider">
       <option value="hetzner">Hetzner Cloud</option>
+      <option value="aws-ec2">Amazon EC2</option>
+      <option value="gcp">Google Compute Engine</option>
       <option value="aws-lightsail">Amazon Lightsail</option>
       <option value="local">This computer</option>
     </select>
@@ -89,6 +91,8 @@
         <label for="reap-provider">Provider</label>
         <select id="reap-provider">
           <option value="hetzner">Hetzner Cloud</option>
+          <option value="aws-ec2">Amazon EC2</option>
+          <option value="gcp">Google Compute Engine</option>
           <option value="aws-lightsail">Amazon Lightsail</option>
           <option value="local">This computer</option>
         </select>
@@ -137,7 +141,8 @@ function formValue(form, name) {
 document.querySelector("#provider").addEventListener("change", (event) => {
   const region = document.querySelector("#region");
   if (event.target.value === "hetzner") region.value = "fsn1";
-  if (event.target.value === "aws-lightsail") region.value = "us-east-1";
+  if (event.target.value === "aws-lightsail" || event.target.value === "aws-ec2") region.value = "us-east-1";
+  if (event.target.value === "gcp") region.value = "us-central1";
   if (event.target.value === "local") region.value = "local";
 });
 
@@ -191,7 +196,7 @@ async function refresh() {
       button.addEventListener("click", async () => {
         button.disabled = true;
         try {
-          await api("/deployments/" + encodeURIComponent(item.id) + "/teardown", { method: "POST" });
+          await api("/deployments/" + encodeURIComponent(item.id) + "/teardown", { method: "POST", body: "{}" });
           await refresh();
         } catch (error) {
           show(result, error.message);

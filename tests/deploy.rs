@@ -99,6 +99,11 @@ fn request(kind: ProviderKind, timeout: u64) -> DeployRequest {
         ingest_cidr: "0.0.0.0/0".into(),
         binary_url: None,
         ready_timeout_secs: timeout,
+        aws_access_key_id: None,
+        aws_secret_access_key: None,
+        aws_session_token: None,
+        gcp_service_account_json: None,
+        project: None,
     }
 }
 
@@ -224,6 +229,11 @@ async fn reaper_deletes_expired_and_stopped_and_skips_the_rest() {
             provider: ProviderKind::Hetzner,
             region: "fsn1".into(),
             dry_run: true,
+            aws_access_key_id: None,
+            aws_secret_access_key: None,
+            aws_session_token: None,
+            gcp_service_account_json: None,
+            project: None,
         })
         .await
         .unwrap();
@@ -240,6 +250,11 @@ async fn reaper_deletes_expired_and_stopped_and_skips_the_rest() {
             provider: ProviderKind::Hetzner,
             region: "fsn1".into(),
             dry_run: false,
+            aws_access_key_id: None,
+            aws_secret_access_key: None,
+            aws_session_token: None,
+            gcp_service_account_json: None,
+            project: None,
         })
         .await
         .unwrap();
@@ -319,6 +334,19 @@ async fn http_deploy_rejects_credential_fields_and_serves_the_page() {
         .await
         .unwrap();
     assert_eq!(bad.status(), 422);
+    let unpaired = client
+        .post(format!("http://{addr}/deploy"))
+        .header("authorization", "Bearer page-token")
+        .json(&serde_json::json!({
+            "provider": "aws-ec2",
+            "region": "us-east-1",
+            "image": "ami-0123456789abcdef0",
+            "aws_secret_access_key": "super-secret-value"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unpaired.status(), 400);
     let ok = client
         .post(format!("http://{addr}/deploy"))
         .header("authorization", "Bearer page-token")
@@ -335,19 +363,86 @@ async fn http_deploy_rejects_credential_fields_and_serves_the_page() {
 }
 
 #[test]
-fn lightsail_policy_is_tagged_and_not_a_general_admin_policy() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("deploy/iam/aws-lightsail-policy.json");
-    let text = std::fs::read_to_string(path).unwrap();
-    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let blob = value.to_string();
-    assert!(blob.contains("lightsail:CreateInstances"));
-    assert!(blob.contains("lightsail:DeleteInstance"));
-    assert!(blob.contains("echochamber-managed"));
-    assert!(!blob.contains("ec2:"));
-    assert!(!blob.contains("s3:"));
-    assert!(!blob.contains("iam:"));
-    assert!(!blob.contains("gcp"));
+fn iam_policies_are_scoped_to_relay_resources() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("deploy/iam");
+    let lightsail: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("aws-lightsail-policy.json")).unwrap(),
+    )
+    .unwrap();
+    let lightsail = lightsail.to_string();
+    assert!(lightsail.contains("lightsail:CreateInstances"));
+    assert!(lightsail.contains("echochamber-managed"));
+    assert!(!lightsail.contains("s3:"));
+    assert!(!lightsail.contains("iam:"));
+
+    let ec2: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join("aws-ec2-policy.json")).unwrap())
+            .unwrap();
+    let ec2_text = ec2.to_string();
+    assert!(ec2_text.contains("ec2:RunInstances"));
+    assert!(ec2_text.contains("ec2:TerminateInstances"));
+    assert!(ec2_text.contains("aws:RequestTag/echochamber-managed"));
+    assert!(ec2_text.contains("aws:ResourceTag/echochamber-managed"));
+    assert!(!ec2_text.contains("s3:"));
+    assert!(!ec2_text.contains("iam:"));
+
+    let gcp: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join("gcp-custom-role.json")).unwrap())
+            .unwrap();
+    let perms: Vec<_> = gcp["includedPermissions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(perms.contains(&"compute.instances.create"));
+    assert!(perms.contains(&"compute.instances.delete"));
+    assert!(perms.contains(&"compute.firewalls.create"));
+    assert!(perms.iter().all(|p| p.starts_with("compute.")));
+}
+
+#[tokio::test]
+async fn request_credentials_are_not_written_to_the_store() {
+    let flag = Arc::new(AtomicBool::new(true));
+    let http = status_server(flag).await;
+    let rtmp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = rtmp.local_addr().unwrap().port();
+    let mock = Arc::new(
+        MockProvider::new(ProviderKind::AwsEc2).endpoint(MockEndpoint {
+            ip: "127.0.0.1".into(),
+            rtmp_port: port,
+            control: ControlPlane::Reachable {
+                url: format!("http://{http}/status"),
+            },
+        }),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("deployments.json");
+    let svc = DeployService::new(
+        Arc::new(FixedFactory {
+            provider: Arc::clone(&mock),
+        }),
+        Store::new(&path),
+        Arc::new(echochamber::deploy::SystemClock),
+        Duration::from_millis(20),
+    );
+    let mut req = request(ProviderKind::AwsEc2, 3);
+    req.region = "us-east-1".into();
+    req.image = Some("ami-0123456789abcdef0".into());
+    req.aws_access_key_id = Some("AKIATESTEXAMPLE".into());
+    req.aws_secret_access_key = Some("super-secret-value".into());
+    req.aws_session_token = Some("session-token-value".into());
+    let record = svc.deploy(req, RelaySeed::default()).await.unwrap();
+    assert_eq!(record.status, DeployStatus::Ready);
+    let stored = std::fs::read_to_string(&path).unwrap();
+    assert!(!stored.contains("super-secret-value"));
+    assert!(!stored.contains("session-token-value"));
+    assert!(!stored.contains("AKIATESTEXAMPLE"));
+    assert!(mock
+        .events()
+        .iter()
+        .any(|event| matches!(event, MockEvent::Create(_))));
+    drop(rtmp);
 }
 
 #[test]

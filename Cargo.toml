@@ -11,9 +11,11 @@ repository = "https://github.com/monomyth/echochamber"
 anyhow = "1"
 async-trait = "0.1"
 # Ring TLS (legacy-client). Credential chain: env, web identity, shared config,
-# SSO, process, container, IMDS. No EC2 client; Lightsail is the AWS provider.
+# SSO, process, container, IMDS. A request may also pass keys explicitly.
 aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "credentials-process", "sso", "legacy-client"] }
+aws-sdk-ec2 = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
 aws-sdk-lightsail = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
+gcp_auth = { version = "0.12", features = ["ring"] }
 axum = { version = "0.8", features = ["macros"] }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }

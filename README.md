@@ -230,7 +230,7 @@ The same actions exist as HTTP on port 8080, on this computer only, unless you c
 
 ## A relay that goes away
 
-You can also start one relay per stream and remove it when the stream ends. Hetzner Cloud is the one to use when bandwidth is the bill. Lightsail is there when you already have an Amazon snapshot and want it up in a minute or two. `local` runs the relay on this computer and costs nothing. Home internet can drop, and a sleeping laptop takes the stream with it.
+You can also start one relay per stream and remove it when the stream ends. Hetzner is the cheap bandwidth path. EC2 and Compute Engine take keys from this device (or the AWS and GCP credential chains) and can delete themselves if the phone goes away. Lightsail is there when you already have an Amazon snapshot. `local` runs the relay on this computer and costs nothing. Home internet can drop, and a sleeping laptop takes the stream with it.
 
 ```bash
 export HETZNER_API_TOKEN=...   # this machine only; never in the request

@@ -32,6 +32,11 @@ pub const DEFAULT_HETZNER_TYPE: &str = "cx23";
 pub const DEFAULT_HETZNER_IMAGE: &str = "ubuntu-24.04";
 pub const DEFAULT_LIGHTSAIL_BUNDLE: &str = "small_3_0";
 pub const DEFAULT_LIGHTSAIL_BLUEPRINT: &str = "ubuntu_22_04";
+pub const DEFAULT_EC2_TYPE: &str = "t3.small";
+pub const DEFAULT_GCP_TYPE: &str = "e2-small";
+pub const DEFAULT_GCP_IMAGE: &str =
+    "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64";
+pub const TAG_SECURITY_GROUP: &str = "echochamber-security-group";
 
 /// Providers this build can provision. Fly.io and others implement the same trait later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +44,8 @@ pub const DEFAULT_LIGHTSAIL_BLUEPRINT: &str = "ubuntu_22_04";
 pub enum ProviderKind {
     Hetzner,
     AwsLightsail,
+    AwsEc2,
+    Gcp,
     Local,
 }
 
@@ -47,13 +54,15 @@ impl ProviderKind {
         match self {
             Self::Hetzner => "hetzner",
             Self::AwsLightsail => "aws-lightsail",
+            Self::AwsEc2 => "aws-ec2",
+            Self::Gcp => "gcp",
             Self::Local => "local",
         }
     }
 
     pub fn is_cloud(self) -> bool {
         match self {
-            Self::Hetzner | Self::AwsLightsail => true,
+            Self::Hetzner | Self::AwsLightsail | Self::AwsEc2 | Self::Gcp => true,
             Self::Local => false,
         }
     }
@@ -72,9 +81,11 @@ impl FromStr for ProviderKind {
         match s.trim() {
             "hetzner" => Ok(Self::Hetzner),
             "aws-lightsail" | "lightsail" => Ok(Self::AwsLightsail),
+            "aws-ec2" | "ec2" => Ok(Self::AwsEc2),
+            "gcp" | "google" => Ok(Self::Gcp),
             "local" => Ok(Self::Local),
             other => Err(DeployError::bad(format!(
-                "unknown provider {other:?}; use hetzner, aws-lightsail, or local"
+                "unknown provider {other:?}; use hetzner, aws-lightsail, aws-ec2, gcp, or local"
             ))),
         }
     }
@@ -103,9 +114,11 @@ impl VmState {
     pub fn from_cloud(name: &str) -> Self {
         match name {
             "running" => Self::Running,
-            "pending" | "initializing" | "starting" | "provisioning" | "migrating"
-            | "rebuilding" => Self::Pending,
-            "stopping" | "stopped" | "shutting-down" | "off" => Self::Stopped,
+            "pending" | "initializing" | "starting" | "provisioning" | "staging" | "migrating"
+            | "rebuilding" | "repairing" => Self::Pending,
+            "stopping" | "stopped" | "shutting-down" | "off" | "suspended" | "suspending" => {
+                Self::Stopped
+            }
             "terminated" | "deleting" | "deleted" => Self::Terminated,
             _ => Self::Failed,
         }
@@ -167,7 +180,7 @@ pub struct InstancePlan {
     pub binary_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeployRequest {
     pub provider: ProviderKind,
@@ -193,6 +206,18 @@ pub struct DeployRequest {
     pub binary_url: Option<String>,
     #[serde(default = "default_ready")]
     pub ready_timeout_secs: u64,
+    /// Sent by the device from its keychain. Not stored.
+    #[serde(default)]
+    pub aws_access_key_id: Option<String>,
+    #[serde(default)]
+    pub aws_secret_access_key: Option<String>,
+    #[serde(default)]
+    pub aws_session_token: Option<String>,
+    /// Service-account JSON from the device. Not stored.
+    #[serde(default)]
+    pub gcp_service_account_json: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 fn default_ttl() -> u64 {
@@ -226,6 +251,11 @@ impl Default for DeployRequest {
             ingest_cidr: default_cidr(),
             binary_url: None,
             ready_timeout_secs: DEFAULT_READY_TIMEOUT,
+            aws_access_key_id: None,
+            aws_secret_access_key: None,
+            aws_session_token: None,
+            gcp_service_account_json: None,
+            project: None,
         }
     }
 }
@@ -258,7 +288,7 @@ impl DeploymentRecord {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReapRequest {
     pub provider: ProviderKind,
@@ -266,6 +296,16 @@ pub struct ReapRequest {
     pub region: String,
     #[serde(default)]
     pub dry_run: bool,
+    #[serde(default)]
+    pub aws_access_key_id: Option<String>,
+    #[serde(default)]
+    pub aws_secret_access_key: Option<String>,
+    #[serde(default)]
+    pub aws_session_token: Option<String>,
+    #[serde(default)]
+    pub gcp_service_account_json: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -346,7 +386,7 @@ pub fn validate_request(req: &DeployRequest) -> Result<(), DeployError> {
         }
         if req.prebuilt && req.image.as_deref().unwrap_or("").is_empty() {
             return Err(DeployError::bad(
-                "prebuilt deploys need --image (a Hetzner snapshot id or name, or a Lightsail snapshot name)",
+                "prebuilt deploys need --image (a snapshot name or id, or an AMI id)",
             ));
         }
     }
@@ -465,7 +505,8 @@ pub fn default_zone(kind: ProviderKind, region: &str, zone: Option<&str>) -> Str
         }
     }
     match kind {
-        ProviderKind::AwsLightsail => format!("{region}a"),
+        ProviderKind::AwsLightsail | ProviderKind::AwsEc2 => format!("{region}a"),
+        ProviderKind::Gcp => format!("{region}-a"),
         ProviderKind::Hetzner | ProviderKind::Local => region.to_string(),
     }
 }
@@ -483,10 +524,14 @@ pub fn default_image(
     match kind {
         ProviderKind::Hetzner if !prebuilt => Ok(DEFAULT_HETZNER_IMAGE.to_string()),
         ProviderKind::AwsLightsail if !prebuilt => Ok(DEFAULT_LIGHTSAIL_BLUEPRINT.to_string()),
+        ProviderKind::Gcp if !prebuilt => Ok(DEFAULT_GCP_IMAGE.to_string()),
         ProviderKind::Local => Ok(String::new()),
-        ProviderKind::Hetzner | ProviderKind::AwsLightsail => Err(DeployError::bad(
-            "prebuilt deploys need an image or snapshot name",
+        ProviderKind::AwsEc2 => Err(DeployError::bad(
+            "EC2 needs an AMI id in --image, for example ami-0123456789abcdef0",
         )),
+        ProviderKind::Hetzner | ProviderKind::AwsLightsail | ProviderKind::Gcp => Err(
+            DeployError::bad("prebuilt deploys need --image (a snapshot name or id)"),
+        ),
     }
 }
 
@@ -499,6 +544,8 @@ pub fn default_size(kind: ProviderKind, size: Option<&str>) -> String {
     match kind {
         ProviderKind::Hetzner => DEFAULT_HETZNER_TYPE.to_string(),
         ProviderKind::AwsLightsail => DEFAULT_LIGHTSAIL_BUNDLE.to_string(),
+        ProviderKind::AwsEc2 => DEFAULT_EC2_TYPE.to_string(),
+        ProviderKind::Gcp => DEFAULT_GCP_TYPE.to_string(),
         ProviderKind::Local => String::new(),
     }
 }
@@ -613,7 +660,9 @@ mod tests {
     fn ids_and_unknown_provider() {
         assert!(validate_deployment_id("ec0123abcd01").is_ok());
         assert!(validate_deployment_id("live").is_err());
-        assert!(ProviderKind::from_str("gcp").is_err());
+        assert_eq!(ProviderKind::from_str("gcp").unwrap(), ProviderKind::Gcp);
+        assert_eq!(ProviderKind::from_str("ec2").unwrap(), ProviderKind::AwsEc2);
+        assert!(ProviderKind::from_str("fly").is_err());
         assert_eq!(
             ProviderKind::from_str("lightsail").unwrap(),
             ProviderKind::AwsLightsail

@@ -4,6 +4,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use super::cloud_init::{self, CloudInitSpec};
+use super::credentials::{CredentialFields, RequestCredentials};
 use super::error::DeployError;
 use super::health::wait_until_ready;
 use super::model::{
@@ -35,11 +36,13 @@ impl Clock for FixedClock {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProviderConfig {
     pub kind: ProviderKind,
     pub region: String,
     pub zone: String,
+    pub project: Option<String>,
+    pub credentials: RequestCredentials,
 }
 
 #[async_trait]
@@ -119,21 +122,21 @@ impl DeployService {
         let image = default_image(req.provider, req.image.as_deref(), req.prebuilt)?;
         let size = default_size(req.provider, req.size.as_deref());
         let tags = managed_tags(&id, created, expires);
-        let user_data = match req.provider {
-            ProviderKind::Local => String::new(),
-            ProviderKind::Hetzner | ProviderKind::AwsLightsail => {
-                cloud_init::render(&CloudInitSpec {
-                    stream_key: &stream_key,
-                    control_token: &control_token,
-                    platforms: &seed.platforms,
-                    quality: &seed.quality,
-                    expires_at_unix: expires,
-                    idle_secs: req.idle_secs,
-                    connect_grace_secs: req.connect_grace_secs,
-                    prebuilt: req.prebuilt,
-                    binary_url: req.binary_url.as_deref(),
-                })?
-            }
+        let credentials = req.credentials()?;
+        let user_data = if req.provider.is_cloud() {
+            cloud_init::render(&CloudInitSpec {
+                stream_key: &stream_key,
+                control_token: &control_token,
+                platforms: &seed.platforms,
+                quality: &seed.quality,
+                expires_at_unix: expires,
+                idle_secs: req.idle_secs,
+                connect_grace_secs: req.connect_grace_secs,
+                prebuilt: req.prebuilt,
+                binary_url: req.binary_url.as_deref(),
+            })?
+        } else {
+            String::new()
         };
         let plan = InstancePlan {
             deployment_id: id.clone(),
@@ -166,6 +169,8 @@ impl DeployService {
             kind: req.provider,
             region: plan.region.clone(),
             zone: zone.clone(),
+            project: req.project.clone(),
+            credentials,
         };
         let mut record = DeploymentRecord {
             id: id.clone(),
@@ -235,12 +240,17 @@ impl DeployService {
         Ok(record)
     }
 
-    pub async fn teardown(&self, id: &str) -> Result<DeploymentRecord, DeployError> {
+    pub async fn teardown(
+        &self,
+        id: &str,
+        fields: CredentialFields,
+    ) -> Result<DeploymentRecord, DeployError> {
         validate_deployment_id(id)?;
         let mut record = self
             .store
             .get(id)?
             .ok_or_else(|| DeployError::missing(format!("no deployment {id}")))?;
+        let creds = fields.credentials_for(record.provider)?;
         record.status = DeployStatus::Destroying;
         self.store.upsert(&record)?;
         let provider = self
@@ -249,6 +259,8 @@ impl DeployService {
                 kind: record.provider,
                 region: record.region.clone(),
                 zone: record.zone.clone(),
+                project: fields.project.clone(),
+                credentials: creds,
             })
             .await?;
         provider.destroy(id).await?;
@@ -262,6 +274,7 @@ impl DeployService {
         if req.provider.is_cloud() && req.region.trim().is_empty() {
             return Err(DeployError::bad("reap needs a region"));
         }
+        let credentials = req.credentials()?;
         let zone = default_zone(req.provider, req.region.trim(), None);
         let provider = self
             .factory
@@ -273,6 +286,8 @@ impl DeployService {
                     req.region.trim().to_string()
                 },
                 zone,
+                project: req.project.clone(),
+                credentials,
             })
             .await?;
         let now = self.clock.now_unix();

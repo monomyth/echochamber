@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 use aws_sdk_lightsail::types::{NetworkProtocol, PortInfo, Tag};
 
+use super::awsutil;
+use super::credentials::RequestCredentials;
 use super::error::DeployError;
 use super::model::{
     is_managed, validate_deployment_id, CloudInstance, ControlPlane, InstancePlan, ProviderKind,
@@ -16,11 +18,12 @@ pub struct LightsailProvider {
 }
 
 impl LightsailProvider {
-    pub async fn connect(region: &str, zone: &str) -> Result<Self, DeployError> {
-        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-            .region(aws_sdk_lightsail::config::Region::new(region.to_string()))
-            .load()
-            .await;
+    pub async fn connect(
+        region: &str,
+        zone: &str,
+        creds: &RequestCredentials,
+    ) -> Result<Self, DeployError> {
+        let config = awsutil::sdk_config(region, creds).await;
         Ok(Self {
             client: aws_sdk_lightsail::Client::new(&config),
             zone: zone.to_string(),

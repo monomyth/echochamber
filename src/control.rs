@@ -13,7 +13,8 @@ use tracing::info;
 
 use crate::config::Destination;
 use crate::deploy::{
-    DeployError, DeployRequest, DeployService, DeploymentRecord, ReapReport, ReapRequest, RelaySeed,
+    CredentialFields, DeployError, DeployRequest, DeployService, DeploymentRecord, ReapReport,
+    ReapRequest, RelaySeed,
 };
 use crate::ffmpeg::{ffmpeg_bin, ffmpeg_has_burnin_filter};
 use crate::redact::redact_key;
@@ -254,9 +255,15 @@ async fn handle_teardown(
     State(ctx): State<ControlCtx>,
     Authed: Authed,
     Path(id): Path<String>,
+    body: Option<Json<CredentialFields>>,
 ) -> Result<Json<DeploymentRecord>, (StatusCode, Json<serde_json::Value>)> {
     let deploy = deploy_service(&ctx)?;
-    deploy.teardown(&id).await.map(Json).map_err(json_error)
+    let fields = body.map(|json| json.0).unwrap_or_default();
+    deploy
+        .teardown(&id, fields)
+        .await
+        .map(Json)
+        .map_err(json_error)
 }
 
 async fn handle_reap(

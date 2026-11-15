@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use super::ec2::Ec2Provider;
 use super::error::DeployError;
+use super::gcp::GcpProvider;
 use super::hetzner::HetznerProvider;
 use super::lightsail::LightsailProvider;
 use super::local::{self, LocalProvider};
@@ -32,9 +34,22 @@ impl ProviderFactory for EnvFactory {
                     cfg.zone.clone()
                 };
                 Ok(Arc::new(
-                    LightsailProvider::connect(&cfg.region, &zone).await?,
+                    LightsailProvider::connect(&cfg.region, &zone, &cfg.credentials).await?,
                 ))
             }
+            ProviderKind::AwsEc2 => {
+                let zone = if cfg.zone.is_empty() {
+                    format!("{}a", cfg.region)
+                } else {
+                    cfg.zone.clone()
+                };
+                Ok(Arc::new(
+                    Ec2Provider::connect(&cfg.region, &zone, &cfg.credentials).await?,
+                ))
+            }
+            ProviderKind::Gcp => Ok(Arc::new(
+                GcpProvider::connect(cfg.project.as_deref(), &cfg.credentials).await?,
+            )),
             ProviderKind::Local => Ok(Arc::new(LocalProvider::new(
                 local::binary_from_env(),
                 local::state_dir_from_env(),

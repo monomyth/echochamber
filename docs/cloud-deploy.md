@@ -2,15 +2,15 @@
 
 echochamber can start one relay per stream and throw it away when the stream ends. Nothing in the relay's streaming path changes. A deployment is a process or a VM that runs the same binary.
 
-Three providers ship in this version:
+| Provider | What it is for |
+|---|---|
+| Hetzner Cloud | Cheapest egress. A planning figure for a typical relay hour is about 3 cents. |
+| Amazon EC2 | The AWS VM. Guest shutdown terminates the instance. |
+| Google Compute Engine | The GCP VM. The platform deletes it at `maxRunDuration`. |
+| Amazon Lightsail | Snapshot boot in a minute or two. It cannot delete itself. |
+| This computer | No cloud bill. The stream lives only as long as the machine and its link do. |
 
-| Order | Provider | Why it is here |
-|---|---|---|
-| 1 | Hetzner Cloud | Egress is the bill that matters. A planning figure for a typical relay hour is about 3 cents. The API is small. |
-| 2 | Amazon Lightsail | A snapshot instance is often accepting RTMP in one to two minutes. |
-| 3 | This computer | No cloud bill. The stream lives only as long as the machine and its link do. |
-
-Fly.io is the likely next provider. A stopped machine there wakes in under a second, which is attractive for a relay, and outgoing bandwidth is billed, which is why it is not in this set. The provider trait is the place to add it. GCP and EC2 are not in this version.
+Fly.io is the likely next provider. A stopped machine there wakes in under a second, and outgoing bandwidth is billed. The provider trait is the place to add it.
 
 ## What you run
 
@@ -25,7 +25,23 @@ export HETZNER_API_TOKEN=...
   --ttl-secs 14400 \
   --idle-secs 600
 
-# Lightsail. Uses the AWS SDK default credential chain. No keys in the request.
+# EC2. Keys from this device, or omit them and use the AWS SDK default chain.
+./target/release/echochamber deploy \
+  --provider aws-ec2 \
+  --region us-east-1 \
+  --image ami-0123456789abcdef0 \
+  --aws-access-key-id AKIA... \
+  --aws-secret-access-key ... \
+  --ttl-secs 14400
+
+# Compute Engine. The JSON file stays on this device.
+./target/release/echochamber deploy \
+  --provider gcp \
+  --region us-central1 \
+  --gcp-service-account-file ~/Library/echochamber/relay.json \
+  --ttl-secs 14400
+
+# Lightsail. Same AWS keys, or the SDK default chain.
 ./target/release/echochamber deploy \
   --provider aws-lightsail \
   --region us-east-1 \
@@ -59,7 +75,28 @@ While `echochamber serve` is running, the same actions are HTTP on the control p
 | `POST /deployments/{id}/teardown` | Destroy it. |
 | `POST /reap` | Sweep labeled orphans. Body: `{"provider":"hetzner","region":"fsn1","dry_run":true}`. |
 
-The page and the CLI do not take cloud credentials. A JSON body that contains a token or a secret key is rejected.
+`POST /deploy`, `POST /reap`, and `POST /deployments/{id}/teardown` accept optional credentials for that one call:
+
+```json
+{
+  "provider": "aws-ec2",
+  "region": "us-east-1",
+  "image": "ami-0123456789abcdef0",
+  "aws_access_key_id": "AKIA...",
+  "aws_secret_access_key": "...",
+  "aws_session_token": "..."
+}
+```
+
+```json
+{
+  "provider": "gcp",
+  "region": "us-central1",
+  "gcp_service_account_json": "{ ...service account key... }"
+}
+```
+
+An iOS app reads those from the Keychain and sends them. Echochamber does not write them to `deployments.json` or the log. Omit them and the AWS SDK default chain, or GCP Application Default Credentials, is used instead. Unknown fields, including a Hetzner token, are rejected. The Hetzner token stays in the environment on the machine that runs the command.
 
 If this machine's `config.toml` has YouTube, X, or Twitch stream keys, they are copied into the relay config so it can forward. YouTube OAuth client secrets are not copied. The copied keys sit in cloud user-data, which anyone who can read the cloud API can see. They are not written to the log.
 
@@ -88,7 +125,16 @@ The hard maximum lifetime is 24 hours. The default is 4 hours. The guest also sh
 
 Stopped guests still cost money until they are deleted. `echochamber reap` deletes labeled resources whose deadline has passed, whose deadline tag is missing, or that are already stopped, terminated, or failed. It will not touch a resource that lacks `echochamber-managed=true`.
 
-Lightsail's guest shutdown stops the instance; the reaper deletes it. Hetzner deletion removes the server and its firewall. Primary IPs created with the server go away with it. IPv6 is left off. No SSH key is installed, and port 22 is not opened.
+What happens when the phone disappears:
+
+| Provider | Idle or deadline with no controller |
+|---|---|
+| EC2 | The instance is launched with `InstanceInitiatedShutdownBehavior=terminate`. The guest's `shutdown` deletes the instance. The security group has no instances left; `reap` removes it the next time a controller is online. An empty security group is not billed. |
+| Compute Engine | `maxRunDuration` is the hard deadline and `instanceTerminationAction` is `DELETE`, so Compute Engine deletes the VM and its boot disk even if the guest watchdog never runs. The guest also shuts down on idle. A VM that has already stopped is no longer billed for CPU; `reap` deletes a stopped disk if the phone comes back before `maxRunDuration` finishes. The guest is not given a credential it could use to call the API itself. |
+| Lightsail | Lightsail cannot self-delete. Guest `shutdown` stops the instance, and a stopped Lightsail instance keeps its charge until `teardown` or `reap` deletes it. |
+| Hetzner | Guest `shutdown` powers the server off. The server object remains until `teardown` or `reap` deletes it. |
+
+No SSH key is installed, and port 22 is not opened. Hetzner primary IPs go away with the server. IPv6 is left off there. Compute Engine also denies 22 and 3389 for the relay's network tag, ahead of the default allow-ssh rule.
 
 ## Hetzner
 
@@ -116,11 +162,52 @@ The script contains a stream key. Do not commit it. In the Hetzner console, crea
 
 `HCLOUD_ENDPOINT` overrides the API base. Leave it unset to use `https://api.hetzner.cloud/v1`.
 
+## EC2
+
+Create a user or role that can only touch tagged relays, then an access key for the phone:
+
+```bash
+aws iam create-policy \
+  --policy-name EchochamberEc2Deploy \
+  --policy-document file://deploy/iam/aws-ec2-policy.json
+aws iam create-user --user-name echochamber-phone
+aws iam attach-user-policy \
+  --user-name echochamber-phone \
+  --policy-arn arn:aws:iam::ACCOUNT:policy/EchochamberEc2Deploy
+aws iam create-access-key --user-name echochamber-phone
+```
+
+Put the access key, secret, and any session token in the iOS Keychain. The app sends them on each deploy, teardown, and reap. On a development machine you can omit the flags and use the AWS SDK default chain instead: environment variables, web identity, shared config, SSO, a credential process, container credentials, then IMDS.
+
+`deploy/iam/aws-ec2-policy.json` allows `RunInstances` on the instance, volume, and network interface only when the request tag `echochamber-managed` is `true`. Terminate and security-group changes require that tag on the resource. Describe calls cannot be tag-scoped. The policy does not grant S3 or IAM.
+
+`--image` is an AMI id (`ami-...`) in `--region`. The zone defaults to `{region}a` and must have a default subnet. `--size` defaults to `t3.small`. The security group allows TCP 1935 from `--ingest-cidr` and nothing else. Metadata requires IMDSv2. No instance profile is attached.
+
+## Compute Engine
+
+Create a custom role and a service account, then a key the phone will hold:
+
+```bash
+gcloud iam roles create echochamberRelay \
+  --project PROJECT \
+  --file deploy/iam/gcp-custom-role.json
+gcloud iam service-accounts create echochamber-phone --project PROJECT
+gcloud projects add-iam-policy-binding PROJECT \
+  --member serviceAccount:echochamber-phone@PROJECT.iam.gserviceaccount.com \
+  --role projects/PROJECT/roles/echochamberRelay
+gcloud iam service-accounts keys create /tmp/echochamber-phone.json \
+  --iam-account echochamber-phone@PROJECT.iam.gserviceaccount.com
+```
+
+Move `/tmp/echochamber-phone.json` into the Keychain or a device-only file and delete the temporary copy. Do not commit it. Pass it with `--gcp-service-account-file`, or as `gcp_service_account_json` on the HTTP request. For a development machine, omit it and use Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS`, `gcloud auth application-default login`, or the metadata server).
+
+The role in `deploy/iam/gcp-custom-role.json` can create and delete instances, disks, and firewalls, and read images and operations. It cannot administer IAM. The VM is created with an empty access scope, so the guest cannot call Google APIs. `--region` is a Compute Engine region such as `us-central1`; the zone defaults to `{region}-a`. `--size` defaults to `e2-small`. `--image` defaults to the Ubuntu 24.04 image family.
+
 ## Lightsail
 
-Credentials come from the AWS SDK default chain on this machine: environment variables, web identity, the shared config and credentials files, SSO, a credential process, container credentials, then IMDS. The deploy request cannot carry them.
+Credentials are the same AWS keys as EC2, or the SDK default chain when you omit them.
 
-Attach `deploy/iam/aws-lightsail-policy.json` to the IAM user or role that runs the control app. Create is allowed only when the request sets `echochamber-managed=true`. Delete, describe, and port changes are allowed only when that tag is already on the instance. List and catalog calls cannot be tag-scoped; Lightsail requires `Resource: "*"` for those. The policy does not grant EC2, S3, or IAM.
+Attach `deploy/iam/aws-lightsail-policy.json` to the IAM user or role. Create is allowed only when the request sets `echochamber-managed=true`. Delete, describe, and port changes are allowed only when that tag is already on the instance. List and catalog calls cannot be tag-scoped; Lightsail requires `Resource: "*"` for those. The policy does not grant EC2 instance APIs, S3, or IAM.
 
 ```bash
 aws iam create-policy \
@@ -153,8 +240,8 @@ State for local relays is under the echochamber config directory (`.../echochamb
 
 ## Still required before a real cloud relay
 
-- A Hetzner project and a Read & Write token, or an AWS account with the Lightsail policy above.
-- Quotas: Hetzner server and firewall limits, Lightsail instance limits in the region.
+- A Hetzner project and a Read & Write token, an AWS key for the EC2 or Lightsail policy, or a GCP service account for the custom role. The phone keeps that secret in the Keychain.
+- Quotas: Hetzner servers and firewalls, EC2 vCPU and Elastic IP, Compute Engine CPUs and in-use addresses, Lightsail instance limits.
 - A snapshot or image with echochamber and ffmpeg if you do not want the first boot to compile from source. The fallback `cargo install` can take most of the ready timeout (default 10 minutes, max 30).
 - DNS and TLS if you need RTMPS. This deploy path hands out `rtmp://` on port 1935. It does not request certificates or open 443.
 - Billing alarms on the cloud account. The reaper is a command you run (or cron). It is not a cloud bill cap.
@@ -163,4 +250,4 @@ State for local relays is under the echochamber config directory (`.../echochamb
 
 ## Tests
 
-`cargo test` uses an in-memory provider and a local fake of the Hetzner API. It does not create cloud resources and does not need tokens.
+`cargo test` uses an in-memory provider and localhost fakes of the Hetzner and Compute Engine APIs. EC2 is tested through a fake of its launch and destroy calls. Nothing in the tests creates a cloud resource or needs a real key.
