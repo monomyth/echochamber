@@ -26,7 +26,7 @@
 <body>
 <main>
   <h1>Deploy a relay</h1>
-  <p>One temporary echochamber per stream. Hetzner is the cheap path. Lightsail boots from a snapshot. Compute Engine works the same way and costs more in egress. This computer is free, and the stream dies if the link or the machine does.</p>
+  <p>One temporary echochamber per stream. Hetzner is the cheap path. Lightsail boots from a snapshot. Compute Engine works the same way and costs more in egress. EC2 is there when you already have an AMI. Fly.io wakes a stopped machine in under a second; egress is $0.02/GB in North America and Europe and you pay that on your own Fly account. This computer is free, and the stream dies if the link or the machine does.</p>
   <p class="warn">This page uses credentials already on this machine. A phone sends its own keys with each request and they are not saved here. A cloud deploy spends money. Leave this tab open; a fresh image can take several minutes, a snapshot usually less.</p>
 
   <form id="deploy">
@@ -35,9 +35,9 @@
       <option value="hetzner">Hetzner Cloud</option>
       <option value="aws-lightsail">Amazon Lightsail</option>
       <option value="gcp">Google Compute Engine</option>
-      <option value="local">This computer</option>
       <option value="aws-ec2">Amazon EC2</option>
-      <option value="fly">Fly.io (planned)</option>
+      <option value="fly">Fly.io</option>
+      <option value="local">This computer</option>
     </select>
     <div class="row">
       <div>
@@ -94,9 +94,9 @@
           <option value="hetzner">Hetzner Cloud</option>
           <option value="aws-lightsail">Amazon Lightsail</option>
           <option value="gcp">Google Compute Engine</option>
-          <option value="local">This computer</option>
           <option value="aws-ec2">Amazon EC2</option>
-          <option value="fly">Fly.io (planned)</option>
+          <option value="fly">Fly.io</option>
+          <option value="local">This computer</option>
         </select>
       </div>
       <div>
@@ -145,6 +145,7 @@ document.querySelector("#provider").addEventListener("change", (event) => {
   if (event.target.value === "hetzner") region.value = "fsn1";
   if (event.target.value === "aws-lightsail" || event.target.value === "aws-ec2") region.value = "us-east-1";
   if (event.target.value === "gcp") region.value = "us-central1";
+  if (event.target.value === "fly") region.value = "iad";
   if (event.target.value === "local") region.value = "local";
 });
 

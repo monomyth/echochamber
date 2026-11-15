@@ -326,10 +326,8 @@ async fn main() -> Result<()> {
                 echochamber::deploy::ProviderKind::Hetzner
                 | echochamber::deploy::ProviderKind::AwsLightsail
                 | echochamber::deploy::ProviderKind::AwsEc2
-                | echochamber::deploy::ProviderKind::Gcp => {}
-                echochamber::deploy::ProviderKind::Fly => {
-                    bail!("Fly.io is planned, not implemented in v1");
-                }
+                | echochamber::deploy::ProviderKind::Gcp
+                | echochamber::deploy::ProviderKind::Fly => {}
             }
             let stream_key = format!("{:016x}{:016x}", rand_u64(), rand_u64());
             let token = format!(
@@ -343,17 +341,31 @@ async fn main() -> Result<()> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            let script = echochamber::deploy::cloud_init_script(
-                &stream_key,
-                &token,
-                now + ttl_secs,
-                idle_secs,
-                connect_grace_secs,
-                prebuilt,
-                binary_url.as_deref(),
-                &seed.platforms,
-                &seed.quality,
-            )?;
+            let script = if kind == echochamber::deploy::ProviderKind::Fly {
+                echochamber::deploy::cloud_init_process_script(
+                    &stream_key,
+                    &token,
+                    now + ttl_secs,
+                    idle_secs,
+                    connect_grace_secs,
+                    prebuilt,
+                    binary_url.as_deref(),
+                    &seed.platforms,
+                    &seed.quality,
+                )?
+            } else {
+                echochamber::deploy::cloud_init_script(
+                    &stream_key,
+                    &token,
+                    now + ttl_secs,
+                    idle_secs,
+                    connect_grace_secs,
+                    prebuilt,
+                    binary_url.as_deref(),
+                    &seed.platforms,
+                    &seed.quality,
+                )?
+            };
             eprintln!("Paste this into the server user-data field. It contains a stream key. Do not commit it.");
             eprintln!(
                 "Create a firewall that allows TCP 1935 only, from the ingest CIDR you chose."

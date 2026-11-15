@@ -145,7 +145,19 @@ impl DeployService {
                 .as_ref()
                 .map(|account| account.project_id.clone())
         });
-        let user_data = if req.provider.is_cloud() {
+        let user_data = if req.provider == ProviderKind::Fly {
+            cloud_init::render_process(&CloudInitSpec {
+                stream_key: &stream_key,
+                control_token: &control_token,
+                platforms: &seed.platforms,
+                quality: &seed.quality,
+                expires_at_unix: expires,
+                idle_secs: req.idle_secs,
+                connect_grace_secs: req.connect_grace_secs,
+                prebuilt: req.prebuilt,
+                binary_url: req.binary_url.as_deref(),
+            })?
+        } else if req.provider.is_cloud() {
             cloud_init::render(&CloudInitSpec {
                 stream_key: &stream_key,
                 control_token: &control_token,

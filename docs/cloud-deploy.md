@@ -7,12 +7,9 @@ echochamber can start one relay per stream and throw it away when the stream end
 | 1 | Hetzner Cloud | Cheapest egress. A planning figure for a typical relay hour is about 3 cents. |
 | 2 | Amazon Lightsail | Snapshot boot in a minute or two. It cannot delete itself. |
 | 3 | Google Compute Engine | Same short-lived VM on GCP. Egress is more expensive than Hetzner. It stays because some accounts are already there. The platform deletes the VM at `maxRunDuration`. |
-| 4 | This computer | No cloud bill. The stream lives only as long as the machine and its link do. |
-| — | Fly.io | Planned, not implemented in v1. Machines wake from stopped in under a second, which suits a phone app, and metered outgoing bandwidth can be passed through to the person who streams. |
-
-Amazon EC2 is also available (`--provider aws-ec2`). Guest shutdown terminates that instance. It is not the default AWS path; Lightsail is.
-
-Fly.io is a supported choice in the app and is marked planned. It is not implemented in v1. Choosing it returns "planned, not implemented" instead of creating a machine. Machines there wake from stopped in under a second, which suits a phone app, and its metered outgoing bandwidth can be passed through to the person who streams.
+| 4 | Amazon EC2 | Guest shutdown terminates the instance. Lightsail is the usual AWS path; EC2 stays for accounts that already have an AMI. |
+| 5 | Fly.io | A stopped machine wakes in under a second, which suits a phone. Egress is metered at $0.02/GB in North America and Europe ([Fly pricing](https://fly.io/docs/about/pricing/), checked 15 Nov 2026) and the person who streams pays that on their own Fly account. |
+| 6 | This computer | No cloud bill. The stream lives only as long as the machine and its link do. |
 
 ## What you run
 
@@ -43,6 +40,18 @@ export HETZNER_API_TOKEN=...
   --region us-central1 \
   --project your-project \
   --ttl-secs 14400
+
+# EC2. An AMI in the region is required. Keys are optional and stay on this device.
+./target/release/echochamber deploy \
+  --provider aws-ec2 \
+  --region us-east-1 \
+  --image ami-0123456789abcdef0 \
+  --ttl-secs 14400
+
+# Fly.io. Token and org stay on this machine. See below.
+export FLY_API_TOKEN='FlyV1 fm2_...'
+export FLY_ORG=relay-org
+./target/release/echochamber deploy --provider fly --region iad --ttl-secs 14400
 
 # This computer. Free. Home internet can drop, and a sleeping laptop kills the stream.
 ./target/release/echochamber deploy --provider local --region local
@@ -102,6 +111,7 @@ Those destination keys, and the per-stream ingest key, are embedded in cloud-ini
 - On Hetzner, user-data is readable by anyone who holds the project token, and from the guest metadata service.
 - On Lightsail and EC2, user-data is readable by anyone who can call `GetInstance` with the account's API credentials, and from the instance metadata service.
 - On Compute Engine, the startup script is instance metadata. It is readable from the guest and by any caller who can `instances.get`.
+- On Fly.io, the boot script is the machine `init` command. It is readable by anyone who holds the org token and can `GET` the machine. It is not a request field and it is not written to the local store.
 
 The deployment file on this machine does not store the ingest stream key or user-data. The deploy response shows the ingest key once. Logs use the same redaction as `status` (`redact_key`): a publish is recorded, the key is not. Do not wrap `echochamber cloud-init` in a logger; that command prints the key on purpose so you can paste it into OBS.
 
@@ -128,7 +138,7 @@ The hard maximum lifetime is 24 hours. The default is 4 hours. The guest also sh
 
 `shutdown` on a cloud guest stops that guest. It does not run on your laptop. The local watchdog kills only the relay process.
 
-`echochamber serve` also sweeps on a timer. The default is every 300 seconds (`[deploy] reap_interval_secs`). Set it to `0` to turn the loop off. Each pass deletes this machine's relays whose deadline has passed or whose guest has already stopped, then runs the same sweep as `reap` for every provider and region in the local store, plus any `[[deploy.targets]]` you listed. A provider error is logged and the loop continues. The manual `reap` command and `POST /reap` stay. The loop uses the host credential chain (Hetzner token, AWS default chain, GCP Application Default Credentials). It does not read keys out of the deployment file, because those keys are not stored.
+`echochamber serve` also sweeps on a timer. The default is every 300 seconds (`[deploy] reap_interval_secs`). Set it to `0` to turn the loop off. Each pass deletes this machine's relays whose deadline has passed or whose guest has already stopped, then runs the same sweep as `reap` for every provider and region in the local store, plus any `[[deploy.targets]]` you listed. A provider error is logged and the loop continues. The manual `reap` command and `POST /reap` stay. The loop uses the host credential chain (Hetzner token, AWS default chain, GCP Application Default Credentials, and `FLY_API_TOKEN` plus `FLY_ORG`). It does not read keys out of the deployment file, because those keys are not stored.
 
 Stopped guests still cost money until they are deleted. The sweep and `echochamber reap` delete labeled resources whose deadline has passed, whose deadline tag is missing, or that are already stopped, terminated, or failed. They will not touch a resource that lacks `echochamber-managed=true`.
 
@@ -140,6 +150,7 @@ What happens when the phone disappears:
 | Compute Engine | `maxRunDuration` is the hard deadline and `instanceTerminationAction` is `DELETE`, so Compute Engine deletes the VM and its boot disk even if the guest watchdog never runs. The guest also shuts down on idle. A VM that has already stopped is no longer billed for CPU; `reap` deletes a stopped disk if the phone comes back before `maxRunDuration` finishes. The guest is not given a credential it could use to call the API itself. |
 | Lightsail | Lightsail cannot self-delete. Guest `shutdown` stops the instance, and a stopped Lightsail instance keeps its charge until `teardown` or `reap` deletes it. |
 | Hetzner | Guest `shutdown` powers the server off. The server object remains until `teardown` or `reap` deletes it. |
+| Fly.io | The guest process exits on idle or deadline. The machine is created with `auto_destroy` and restart policy `no`, so that exit destroys the machine instead of leaving it stopped. `reap` still stops and then force-deletes any labeled machine that is stopped or expired, and deletes the per-stream app so its dedicated IPv4 does not keep billing. |
 
 No SSH key is installed, and port 22 is not opened. Hetzner primary IPs go away with the server. IPv6 is left off there. Compute Engine also denies 22 and 3389 for the relay's network tag, ahead of the default allow-ssh rule.
 
@@ -235,6 +246,24 @@ Do not decide Lightsail's cost by assuming either of these:
 
 Which one AWS bills is not settled here. Confirm it with AWS billing support before you commit to Lightsail for relays where egress is the cost. This tree does not compute a Lightsail transfer price.
 
+## Fly.io
+
+Create an org that contains only these relays. An app-scoped deploy token cannot create the next app, so the token is an org token, and the org is the scope:
+
+```bash
+fly tokens create org -o relay-org --name echochamber --expiry 168h
+```
+
+Put the whole printed line, including the `FlyV1 ` prefix, in `FLY_API_TOKEN` on the machine that runs deploy. Set `FLY_ORG` to that org's slug. Neither value is a field in the deploy request, and neither is committed. `fly auth token` is the personal token for every org on the account; do not use it here. A read-only org token cannot create machines.
+
+Each stream gets its own app, named `echochamber-` plus the deployment id, and one Machine. Metadata is `echochamber-managed=true`, the deployment id, and the deadline, which is what `reap` selects. The only published service is TCP 1935. Fly's proxy does not apply a source CIDR, so `--ingest-cidr` is recorded on the machine and enforced on the other providers; on Fly the guest still holds 1935 closed until its own loopback `/status` check passes. Control stays on `127.0.0.1` with a per-deployment token.
+
+Raw TCP needs a dedicated IPv4. Shared IPv4 is only ports 80 and 443. That address is $2/month ([Fly pricing](https://fly.io/docs/about/pricing/), checked 15 Nov 2026) until the app is deleted. `teardown` and `reap` delete the app, which releases it. A stopped machine's root filesystem is also billed until the machine is destroyed; `auto_destroy` and restart policy `no` are set so the guest exiting removes the machine, and `reap` stop-then-deletes anything left over.
+
+`--region` is a Fly region code such as `iad`, `lhr`, or `ams`. `--size` defaults to `shared-cpu-1x` (1 shared CPU, 1024 MB). `--image` defaults to `registry-1.docker.io/library/ubuntu:24.04`. `--prebuilt` expects that image to already contain echochamber and ffmpeg. `FLY_API_HOSTNAME` overrides the API base. Leave it unset to use `https://api.machines.dev`.
+
+Outbound transfer in North America and Europe is $0.02/GB on the same pricing page. Asia Pacific, Oceania, and South America are $0.04/GB, and Africa and India are $0.12/GB. The streamer's Fly account pays that directly. It is not resold by echochamber.
+
 ## This computer
 
 `echochamber deploy --provider local` starts another echochamber process, health-checks it, and returns an ingest URL on your LAN address when it can see one. Control stays on `127.0.0.1` with a fresh token. The parent checks both the RTMP port and `/status` before it prints the URL.
@@ -247,14 +276,27 @@ State for local relays is under the echochamber config directory (`.../echochamb
 
 ## Still required before a real cloud relay
 
-- A Hetzner project and a Read & Write token, an AWS key for the EC2 or Lightsail policy, or a GCP service account for the custom role. The phone keeps that secret in the Keychain.
-- Quotas: Hetzner servers and firewalls, EC2 vCPU and Elastic IP, Compute Engine CPUs and in-use addresses, Lightsail instance limits.
+- A Hetzner project and a Read & Write token, an AWS key for the EC2 or Lightsail policy, a GCP service account for the custom role, or a Fly org token plus `FLY_ORG`. The phone keeps an AWS or GCP secret in the Keychain. The Hetzner and Fly tokens stay on the machine that runs the command.
+- Quotas: Hetzner servers and firewalls, EC2 vCPU and Elastic IP, Compute Engine CPUs and in-use addresses, Lightsail instance limits, Fly machine size and dedicated IPv4.
 - A snapshot or image with echochamber and ffmpeg if you do not want the first boot to compile from source. The fallback `cargo install` can take most of the ready timeout (default 10 minutes, max 30).
 - DNS and TLS if you need RTMPS. This deploy path hands out `rtmp://` on port 1935. It does not request certificates or open 443.
 - Billing alarms on the cloud account. The reaper is a command you run (or cron). It is not a cloud bill cap.
 - Metering of who streamed is not in this version. The relay's existing `/status` bandwidth fields still work on the guest; they are not shipped to a billing system.
 - Destination stream keys in your local `config.toml` if the cloud relay should forward. Without them it accepts ingest and pushes nowhere.
 
+## Planned providers
+
+These are not built. Prices below were checked on 15 Nov 2026 unless the line says otherwise.
+
+| Provider | Why it is worth adding |
+|---|---|
+| Scaleway | Instances come up in seconds and the public instance price includes egress, so there is no per-GB transfer line for the VM ([Scaleway virtual instance pricing](https://www.scaleway.com/en/pricing/virtual-instances/), 15 Nov 2026). The Instance API is a small REST surface. Regions are in Europe. |
+| Vultr | Hourly instances and a straightforward REST API. A $0.01/GB overage after a free pool is repeated on secondary writeups, but Vultr's bandwidth doc URL returned 404 on 15 Nov 2026, so that rate is not confirmed here. |
+| Akamai Connected Cloud | The old Linode API is a small instance API, which is easy to wrap. The pricing page confirms that a powered-off VM is still billed until it is deleted ([Akamai Cloud pricing](https://www.akamai.com/cloud/pricing), 15 Nov 2026). It does not state a per-GB overage on that page, so no transfer rate is given here. |
+| OVHcloud Public Cloud | Often the other cheap-egress EU cloud next to Scaleway. This check did not open an OVH pricing page, so no bandwidth number is stated. Boot time was not measured. |
+
+Hosted multistream products (Restream, Castr, Cloudflare Stream) are a different shape: they hold the stream and bill per channel or per delivered minute. They are not machine providers, and they are not in this table. Open-source relays in the same job (MediaMTX, OvenMediaEngine, nginx-rtmp) already run as the guest image if you point `--image` at one; echochamber's own binary is what these providers boot.
+
 ## Tests
 
-`cargo test` uses an in-memory provider and localhost fakes of the Hetzner and Compute Engine APIs. EC2 is tested through a fake of its launch and destroy calls. Nothing in the tests creates a cloud resource or needs a real key.
+`cargo test` uses an in-memory provider and localhost fakes of the Hetzner, Compute Engine, and Fly Machines APIs. EC2 is tested through a fake of its launch and destroy calls. Nothing in the tests creates a cloud resource or needs a real key.

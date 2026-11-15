@@ -36,9 +36,11 @@ pub const DEFAULT_EC2_TYPE: &str = "t3.small";
 pub const DEFAULT_GCP_TYPE: &str = "e2-small";
 pub const DEFAULT_GCP_IMAGE: &str =
     "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64";
+pub const DEFAULT_FLY_SIZE: &str = "shared-cpu-1x";
+pub const DEFAULT_FLY_IMAGE: &str = "registry-1.docker.io/library/ubuntu:24.04";
 pub const TAG_SECURITY_GROUP: &str = "echochamber-security-group";
 
-/// Providers this build can provision. Fly.io and others implement the same trait later.
+/// Providers this build can provision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderKind {
@@ -47,7 +49,6 @@ pub enum ProviderKind {
     AwsEc2,
     Gcp,
     Local,
-    /// Listed so callers get an explicit error. Not implemented in v1.
     Fly,
 }
 
@@ -89,7 +90,7 @@ impl FromStr for ProviderKind {
             "local" => Ok(Self::Local),
             "fly" | "fly.io" => Ok(Self::Fly),
             other => Err(DeployError::bad(format!(
-                "unknown provider {other:?}; use hetzner, aws-lightsail, aws-ec2, gcp, or local"
+                "unknown provider {other:?}; use hetzner, aws-lightsail, aws-ec2, gcp, fly, or local"
             ))),
         }
     }
@@ -355,23 +356,7 @@ pub fn should_reap(inst: &CloudInstance, now: u64) -> bool {
     }
 }
 
-pub fn planned_provider_error(kind: ProviderKind) -> Option<DeployError> {
-    match kind {
-        ProviderKind::Fly => Some(DeployError::bad(
-            "Fly.io is planned, not implemented in v1. Machines there wake from stopped in under a second, which suits a phone, and metered egress can be billed to the person who streams.",
-        )),
-        ProviderKind::Hetzner
-        | ProviderKind::AwsLightsail
-        | ProviderKind::AwsEc2
-        | ProviderKind::Gcp
-        | ProviderKind::Local => None,
-    }
-}
-
 pub fn validate_request(req: &DeployRequest) -> Result<(), DeployError> {
-    if let Some(err) = planned_provider_error(req.provider) {
-        return Err(err);
-    }
     if req.ttl_secs < MIN_TTL_SECS || req.ttl_secs > MAX_TTL_SECS {
         return Err(DeployError::bad(format!(
             "ttl_secs must be between {MIN_TTL_SECS} and {MAX_TTL_SECS}"
@@ -548,14 +533,17 @@ pub fn default_image(
         ProviderKind::Hetzner if !prebuilt => Ok(DEFAULT_HETZNER_IMAGE.to_string()),
         ProviderKind::AwsLightsail if !prebuilt => Ok(DEFAULT_LIGHTSAIL_BLUEPRINT.to_string()),
         ProviderKind::Gcp if !prebuilt => Ok(DEFAULT_GCP_IMAGE.to_string()),
+        ProviderKind::Fly if !prebuilt => Ok(DEFAULT_FLY_IMAGE.to_string()),
         ProviderKind::Local => Ok(String::new()),
-        ProviderKind::Fly => Err(planned_provider_error(ProviderKind::Fly).unwrap()),
         ProviderKind::AwsEc2 => Err(DeployError::bad(
             "EC2 needs an AMI id in --image, for example ami-0123456789abcdef0",
         )),
-        ProviderKind::Hetzner | ProviderKind::AwsLightsail | ProviderKind::Gcp => Err(
-            DeployError::bad("prebuilt deploys need --image (a snapshot name or id)"),
-        ),
+        ProviderKind::Hetzner
+        | ProviderKind::AwsLightsail
+        | ProviderKind::Gcp
+        | ProviderKind::Fly => Err(DeployError::bad(
+            "prebuilt deploys need --image (a snapshot name or id)",
+        )),
     }
 }
 
@@ -570,7 +558,8 @@ pub fn default_size(kind: ProviderKind, size: Option<&str>) -> String {
         ProviderKind::AwsLightsail => DEFAULT_LIGHTSAIL_BUNDLE.to_string(),
         ProviderKind::AwsEc2 => DEFAULT_EC2_TYPE.to_string(),
         ProviderKind::Gcp => DEFAULT_GCP_TYPE.to_string(),
-        ProviderKind::Local | ProviderKind::Fly => String::new(),
+        ProviderKind::Fly => DEFAULT_FLY_SIZE.to_string(),
+        ProviderKind::Local => String::new(),
     }
 }
 
@@ -687,10 +676,10 @@ mod tests {
         assert_eq!(ProviderKind::from_str("gcp").unwrap(), ProviderKind::Gcp);
         assert_eq!(ProviderKind::from_str("ec2").unwrap(), ProviderKind::AwsEc2);
         assert_eq!(ProviderKind::from_str("fly").unwrap(), ProviderKind::Fly);
-        assert!(planned_provider_error(ProviderKind::Fly)
-            .unwrap()
-            .to_string()
-            .contains("planned, not implemented"));
+        assert_eq!(
+            default_image(ProviderKind::Fly, None, false).unwrap(),
+            DEFAULT_FLY_IMAGE
+        );
         assert_eq!(
             ProviderKind::from_str("lightsail").unwrap(),
             ProviderKind::AwsLightsail

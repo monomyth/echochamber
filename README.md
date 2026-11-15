@@ -230,7 +230,7 @@ The same actions exist as HTTP on port 8080, on this computer only, unless you c
 
 ## A relay that goes away
 
-You can also start one relay per stream and remove it when the stream ends. Hetzner is the cheap bandwidth path. Lightsail is there when you already have an Amazon snapshot. Compute Engine is the same kind of short-lived VM on GCP; its egress costs more than Hetzner. `local` runs the relay on this computer and costs nothing. Home internet can drop, and a sleeping laptop takes the stream with it. Fly.io is listed as planned, not built yet: its machines wake from stopped in under a second, which suits a phone, and its metered egress can be billed to the person who streams. EC2 remains available too. `serve` deletes stopped or expired relays every five minutes. Set `reap_interval_secs = 0` under `[deploy]` to turn that off.
+You can also start one relay per stream and remove it when the stream ends. Hetzner is the cheap bandwidth path. Lightsail is there when you already have an Amazon snapshot. Compute Engine is the same kind of short-lived VM on GCP; its egress costs more than Hetzner. EC2 is there when you already have an AMI. Fly.io wakes a stopped machine in under a second, and its egress is $0.02/GB in North America and Europe, paid on the streamer's own Fly account. `local` runs the relay on this computer and costs nothing. Home internet can drop, and a sleeping laptop takes the stream with it. `serve` deletes stopped or expired relays every five minutes. Set `reap_interval_secs = 0` under `[deploy]` to turn that off.
 
 ```bash
 export HETZNER_API_TOKEN=...   # this machine only; never in the request
