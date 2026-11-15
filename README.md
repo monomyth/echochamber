@@ -228,6 +228,12 @@ The same actions exist as HTTP on port 8080, on this computer only, unless you c
 | `POST /stop` | `stop` |
 | `POST /push` with `{"url": "..."}` | `push --url` |
 
+## Plans
+
+The free tier, decided by Eugene on 14 Nov 2026, is X plus one more destination. Applying that cap in the relay is still an open decision.
+
+Fly.io is a supported provider in this build, with Hetzner, Lightsail, GCP, AWS EC2, and this computer.
+
 ## A relay that goes away
 
 You can also start one relay per stream and remove it when the stream ends. Hetzner is the cheap bandwidth path. Lightsail is there when you already have an Amazon snapshot. Compute Engine is the same kind of short-lived VM on GCP; its egress costs more than Hetzner. EC2 is there when you already have an AMI. Fly.io wakes a stopped machine in under a second, and its egress is $0.02/GB in North America and Europe, paid on the streamer's own Fly account. `local` runs the relay on this computer and costs nothing. Home internet can drop, and a sleeping laptop takes the stream with it. `serve` deletes stopped or expired relays every five minutes. Set `reap_interval_secs = 0` under `[deploy]` to turn that off.

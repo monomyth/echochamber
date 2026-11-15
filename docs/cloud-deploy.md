@@ -11,6 +11,12 @@ echochamber can start one relay per stream and throw it away when the stream end
 | 5 | Fly.io | A stopped machine wakes in under a second, which suits a phone. Egress is metered at $0.02/GB in North America and Europe ([Fly pricing](https://fly.io/docs/about/pricing/), checked 15 Nov 2026) and the person who streams pays that on their own Fly account. |
 | 6 | This computer | No cloud bill. The stream lives only as long as the machine and its link do. |
 
+## Plans
+
+The free tier, decided by Eugene on 14 Nov 2026, is X plus one more destination. Applying that cap in the relay is still an open decision.
+
+Fly.io is a supported provider in this build. The order stays Hetzner, Lightsail, GCP, AWS EC2, Fly.io, then this computer.
+
 ## What you run
 
 From a checkout, after `cargo build --release`:
