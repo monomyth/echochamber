@@ -327,6 +327,9 @@ async fn main() -> Result<()> {
                 | echochamber::deploy::ProviderKind::AwsLightsail
                 | echochamber::deploy::ProviderKind::AwsEc2
                 | echochamber::deploy::ProviderKind::Gcp => {}
+                echochamber::deploy::ProviderKind::Fly => {
+                    bail!("Fly.io is planned, not implemented in v1");
+                }
             }
             let stream_key = format!("{:016x}{:016x}", rand_u64(), rand_u64());
             let token = format!(

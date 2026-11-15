@@ -54,6 +54,8 @@ impl ProviderFactory for EnvFactory {
                 local::binary_from_env(),
                 local::state_dir_from_env(),
             ))),
+            ProviderKind::Fly => Err(super::model::planned_provider_error(ProviderKind::Fly)
+                .unwrap_or_else(|| DeployError::bad("Fly.io is planned, not implemented in v1"))),
         }
     }
 }

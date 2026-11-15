@@ -175,7 +175,7 @@ pub fn credentials_for(
                 ));
             }
         }
-        ProviderKind::Hetzner | ProviderKind::Local => {
+        ProviderKind::Hetzner | ProviderKind::Local | ProviderKind::Fly => {
             if aws.is_some() || gcp.is_some() {
                 return Err(DeployError::bad(
                     "this provider does not take AWS or GCP credentials on the request",

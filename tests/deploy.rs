@@ -438,6 +438,7 @@ async fn request_credentials_are_not_written_to_the_store() {
     assert!(!stored.contains("super-secret-value"));
     assert!(!stored.contains("session-token-value"));
     assert!(!stored.contains("AKIATESTEXAMPLE"));
+    assert!(!stored.contains(record.stream_key.as_deref().unwrap()));
     assert!(mock
         .events()
         .iter()
@@ -457,6 +458,7 @@ fn deployment_record_hides_the_url_until_ready() {
         public_ip: Some("127.0.0.1".into()),
         ingest_server: Some("rtmp://127.0.0.1:1935/echochamber".into()),
         stream_key: Some("abc".into()),
+        project: None,
         expires_at_unix: 1,
         created_at_unix: 1,
         error: None,

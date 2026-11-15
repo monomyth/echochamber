@@ -9,6 +9,7 @@ use rtmp_rs::{RtmpHandler, RtmpServer, ServerConfig};
 use tracing::{info, warn};
 
 use crate::config::Config;
+use crate::redact::redact_key;
 use crate::state::Shared;
 
 pub struct EchoHandler {
@@ -66,10 +67,10 @@ impl RtmpHandler for EchoHandler {
 
     async fn on_publish(&self, ctx: &SessionContext, params: &PublishParams) -> AuthResult {
         if !self.accept_key(&params.stream_key) {
-            warn!(key = %params.stream_key, "rejecting publish");
+            warn!(key = %redact_key(&params.stream_key), "rejecting publish");
             return Self::reject_key();
         }
-        info!(app = %ctx.app, key = %params.stream_key, "publisher connected");
+        info!(app = %ctx.app, key = %redact_key(&params.stream_key), "publisher connected");
         if ctx.app != self.cfg().ingest.app {
             tracing::warn!(
                 obs_app = %ctx.app,

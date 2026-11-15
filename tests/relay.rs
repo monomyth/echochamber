@@ -724,7 +724,8 @@ async fn standby_follows_the_publisher() {
                 > 2000
     })
     .await;
-    let during_v: serde_json::Value = serde_json::from_str(&during).unwrap_or(serde_json::json!({}));
+    let during_v: serde_json::Value =
+        serde_json::from_str(&during).unwrap_or(serde_json::json!({}));
     assert_eq!(
         during_v["ingest"]["standby"].as_bool(),
         Some(true),
@@ -735,9 +736,9 @@ async fn standby_follows_the_publisher() {
     let back = wait_status(&client, &status_url, Duration::from_secs(10), |v| {
         v["ingest"]["publishing"].as_bool() == Some(true)
             && v["ingest"]["standby"].as_bool() == Some(false)
-            && v["pushers"].as_array().is_some_and(|a| {
-                a.iter().any(|p| p["state"].as_str() == Some("running"))
-            })
+            && v["pushers"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|p| p["state"].as_str() == Some("running")))
     })
     .await;
     let _ = second.start_kill();
@@ -754,6 +755,122 @@ async fn standby_follows_the_publisher() {
     );
 
     let _ = client
+        .post(format!("http://127.0.0.1:{http_port}/stop"))
+        .send()
+        .await;
+    let _ = tokio::time::timeout(Duration::from_secs(5), serve).await;
+}
+
+#[tokio::test]
+async fn wrong_ingest_stream_key_is_rejected() {
+    if !ffmpeg() {
+        eprintln!("skip: ffmpeg not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let cfg_path = dir.path().join("config.toml");
+    write_init_template(&cfg_path).unwrap();
+    let mut text = std::fs::read_to_string(&cfg_path).unwrap();
+    let rtmp_port = free_port();
+    let http_port = free_port();
+    text = text.replace("127.0.0.1:1935", &format!("127.0.0.1:{rtmp_port}"));
+    text = text.replace("127.0.0.1:8080", &format!("127.0.0.1:{http_port}"));
+    text = text.replace("stream_key = \"live\"", "stream_key = \"correct-key-99\"");
+    std::fs::write(&cfg_path, text).unwrap();
+    let cfg = Config::load_from_path(&cfg_path).unwrap();
+    let serve = tokio::spawn(echochamber::daemon::serve(cfg, cfg_path));
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let wrong = format!("rtmp://127.0.0.1:{rtmp_port}/echochamber/wrong-key-99");
+    let rejected = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-re",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=160x120:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=44100",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-t",
+            "2",
+            "-f",
+            "flv",
+            &wrong,
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let status = tokio::time::timeout(Duration::from_secs(15), rejected)
+        .await
+        .expect("wrong-key publish timed out")
+        .unwrap();
+    assert!(!status.success(), "wrong stream key was accepted");
+    let body = reqwest::Client::new()
+        .get(format!("http://127.0.0.1:{http_port}/status"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let status_json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(status_json["ingest"]["publishing"], false, "{body}");
+
+    let right = format!("rtmp://127.0.0.1:{rtmp_port}/echochamber/correct-key-99");
+    let mut accepted = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-re",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=160x120:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=44100",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-t",
+            "2",
+            "-f",
+            "flv",
+            &right,
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let live = reqwest::Client::new()
+        .get(format!("http://127.0.0.1:{http_port}/status"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let live_json: serde_json::Value = serde_json::from_str(&live).unwrap();
+    assert_eq!(live_json["ingest"]["publishing"], true, "{live}");
+    let _ = accepted.kill().await;
+    let _ = reqwest::Client::new()
         .post(format!("http://127.0.0.1:{http_port}/stop"))
         .send()
         .await;

@@ -2,15 +2,17 @@
 
 echochamber can start one relay per stream and throw it away when the stream ends. Nothing in the relay's streaming path changes. A deployment is a process or a VM that runs the same binary.
 
-| Provider | What it is for |
-|---|---|
-| Hetzner Cloud | Cheapest egress. A planning figure for a typical relay hour is about 3 cents. |
-| Amazon EC2 | The AWS VM. Guest shutdown terminates the instance. |
-| Google Compute Engine | The GCP VM. The platform deletes it at `maxRunDuration`. |
-| Amazon Lightsail | Snapshot boot in a minute or two. It cannot delete itself. |
-| This computer | No cloud bill. The stream lives only as long as the machine and its link do. |
+| Order | Provider | What it is for |
+|---|---|---|
+| 1 | Hetzner Cloud | Cheapest egress. A planning figure for a typical relay hour is about 3 cents. |
+| 2 | Amazon Lightsail | Snapshot boot in a minute or two. It cannot delete itself. |
+| 3 | Google Compute Engine | Same short-lived VM on GCP. Egress is more expensive than Hetzner. It stays because some accounts are already there. The platform deletes the VM at `maxRunDuration`. |
+| 4 | This computer | No cloud bill. The stream lives only as long as the machine and its link do. |
+| — | Fly.io | Planned, not implemented in v1. Machines wake from stopped in under a second, which suits a phone app, and metered outgoing bandwidth can be passed through to the person who streams. |
 
-Fly.io is the likely next provider. A stopped machine there wakes in under a second, and outgoing bandwidth is billed. The provider trait is the place to add it.
+Amazon EC2 is also available (`--provider aws-ec2`). Guest shutdown terminates that instance. It is not the default AWS path; Lightsail is.
+
+Fly.io is a supported choice in the app and is marked planned. It is not implemented in v1. Choosing it returns "planned, not implemented" instead of creating a machine. Machines there wake from stopped in under a second, which suits a phone app, and its metered outgoing bandwidth can be passed through to the person who streams.
 
 ## What you run
 
@@ -25,28 +27,21 @@ export HETZNER_API_TOKEN=...
   --ttl-secs 14400 \
   --idle-secs 600
 
-# EC2. Keys from this device, or omit them and use the AWS SDK default chain.
-./target/release/echochamber deploy \
-  --provider aws-ec2 \
-  --region us-east-1 \
-  --image ami-0123456789abcdef0 \
-  --aws-access-key-id AKIA... \
-  --aws-secret-access-key ... \
-  --ttl-secs 14400
-
-# Compute Engine. The JSON file stays on this device.
-./target/release/echochamber deploy \
-  --provider gcp \
-  --region us-central1 \
-  --gcp-service-account-file ~/Library/echochamber/relay.json \
-  --ttl-secs 14400
-
-# Lightsail. Same AWS keys, or the SDK default chain.
+# Lightsail. Uses the AWS SDK default chain on this machine.
 ./target/release/echochamber deploy \
   --provider aws-lightsail \
   --region us-east-1 \
   --image echochamber-snapshot \
   --prebuilt \
+  --ttl-secs 14400
+
+# Compute Engine. Application Default Credentials on this machine.
+# gcloud auth application-default login
+# or set GOOGLE_APPLICATION_CREDENTIALS to a key file that stays on this host.
+./target/release/echochamber deploy \
+  --provider gcp \
+  --region us-central1 \
+  --project your-project \
   --ttl-secs 14400
 
 # This computer. Free. Home internet can drop, and a sleeping laptop kills the stream.
@@ -98,7 +93,17 @@ While `echochamber serve` is running, the same actions are HTTP on the control p
 
 An iOS app reads those from the Keychain and sends them. Echochamber does not write them to `deployments.json` or the log. Omit them and the AWS SDK default chain, or GCP Application Default Credentials, is used instead. Unknown fields, including a Hetzner token, are rejected. The Hetzner token stays in the environment on the machine that runs the command.
 
-If this machine's `config.toml` has YouTube, X, or Twitch stream keys, they are copied into the relay config so it can forward. YouTube OAuth client secrets are not copied. The copied keys sit in cloud user-data, which anyone who can read the cloud API can see. They are not written to the log.
+## Known exposure: destination keys in user-data
+
+If this machine's `config.toml` has YouTube, X, or Twitch stream keys, they are copied into the relay config so it can forward. YouTube OAuth client secrets are not copied.
+
+Those destination keys, and the per-stream ingest key, are embedded in cloud-init user-data. That is a known exposure, left as-is for now:
+
+- On Hetzner, user-data is readable by anyone who holds the project token, and from the guest metadata service.
+- On Lightsail and EC2, user-data is readable by anyone who can call `GetInstance` with the account's API credentials, and from the instance metadata service.
+- On Compute Engine, the startup script is instance metadata. It is readable from the guest and by any caller who can `instances.get`.
+
+The deployment file on this machine does not store the ingest stream key or user-data. The deploy response shows the ingest key once. Logs use the same redaction as `status` (`redact_key`): a publish is recorded, the key is not. Do not wrap `echochamber cloud-init` in a logger; that command prints the key on purpose so you can paste it into OBS.
 
 ## Ready means both checks
 
@@ -123,7 +128,9 @@ The hard maximum lifetime is 24 hours. The default is 4 hours. The guest also sh
 
 `shutdown` on a cloud guest stops that guest. It does not run on your laptop. The local watchdog kills only the relay process.
 
-Stopped guests still cost money until they are deleted. `echochamber reap` deletes labeled resources whose deadline has passed, whose deadline tag is missing, or that are already stopped, terminated, or failed. It will not touch a resource that lacks `echochamber-managed=true`.
+`echochamber serve` also sweeps on a timer. The default is every 300 seconds (`[deploy] reap_interval_secs`). Set it to `0` to turn the loop off. Each pass deletes this machine's relays whose deadline has passed or whose guest has already stopped, then runs the same sweep as `reap` for every provider and region in the local store, plus any `[[deploy.targets]]` you listed. A provider error is logged and the loop continues. The manual `reap` command and `POST /reap` stay. The loop uses the host credential chain (Hetzner token, AWS default chain, GCP Application Default Credentials). It does not read keys out of the deployment file, because those keys are not stored.
+
+Stopped guests still cost money until they are deleted. The sweep and `echochamber reap` delete labeled resources whose deadline has passed, whose deadline tag is missing, or that are already stopped, terminated, or failed. They will not touch a resource that lacks `echochamber-managed=true`.
 
 What happens when the phone disappears:
 

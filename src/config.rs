@@ -24,6 +24,9 @@ pub struct Config {
     pub quality: QualityConfig,
     #[serde(default)]
     pub standby: StandbyConfig,
+    /// Background deletion of stopped or expired cloud relays.
+    #[serde(default)]
+    pub deploy: DeployConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,6 +212,9 @@ fn default_standby_fps() -> u32 {
 fn default_standby_delay() -> u64 {
     2
 }
+fn default_reap_interval() -> u64 {
+    300
+}
 
 impl Default for IngestConfig {
     fn default() -> Self {
@@ -249,6 +255,33 @@ impl Default for QualityConfig {
             mode: QualityMode::Copy,
             preset: default_preset(),
             crf: default_crf(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployConfig {
+    /// How often `serve` deletes stopped or expired relays. `0` turns that off.
+    #[serde(default = "default_reap_interval")]
+    pub reap_interval_secs: u64,
+    /// Provider and region pairs to sweep even when this machine has no record.
+    #[serde(default)]
+    pub targets: Vec<DeployTarget>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployTarget {
+    pub provider: String,
+    pub region: String,
+    #[serde(default)]
+    pub project: Option<String>,
+}
+
+impl Default for DeployConfig {
+    fn default() -> Self {
+        Self {
+            reap_interval_secs: default_reap_interval(),
+            targets: Vec::new(),
         }
     }
 }
@@ -574,6 +607,10 @@ impl Config {
         ));
         lines.push(format!("quality.mode       {:?}", self.quality.mode));
         lines.push(format!(
+            "deploy.reap         every {}s (0 disables)",
+            self.deploy.reap_interval_secs
+        ));
+        lines.push(format!(
             "standby            enabled={} after_first_publish={} {}x{}@{} {video} {audio}",
             self.standby.enabled,
             self.standby.after_first_publish,
@@ -765,6 +802,14 @@ height = 1080
 fps = 30
 # Seconds to wait after OBS stops, so a short glitch does not flash the waiting video.
 delay_secs = 2
+
+[deploy]
+# serve deletes stopped or expired cloud relays this often. 0 turns that off.
+reap_interval_secs = 300
+# Also sweep a cloud even when this machine has no record of a relay there.
+# [[deploy.targets]]
+# provider = "hetzner"
+# region = "fsn1"
 "#;
 
 #[cfg(test)]
@@ -839,6 +884,19 @@ mod tests {
         });
         assert!(cfg.youtube_publish_url().is_none());
         assert!(cfg.configured_destinations().is_empty());
+    }
+
+    #[test]
+    fn missing_deploy_table_reaps_every_five_minutes() {
+        let cfg: Config = toml::from_str(
+            r#"
+[ingest]
+bind = "127.0.0.1:1935"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.deploy.reap_interval_secs, 300);
+        assert!(cfg.deploy.targets.is_empty());
     }
 
     #[test]

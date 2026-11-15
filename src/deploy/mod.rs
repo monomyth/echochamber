@@ -26,7 +26,7 @@ pub use model::{
     ReapReport, ReapRequest, VmState, DEFAULT_GRACE_SECS, DEFAULT_IDLE_SECS, DEFAULT_READY_TIMEOUT,
     DEFAULT_TTL_SECS,
 };
-pub use service::{Clock, DeployService, FixedClock, RelaySeed, SystemClock};
+pub use service::{Clock, DeployService, FixedClock, RelaySeed, SweepTarget, SystemClock};
 pub use store::Store;
 
 pub fn cloud_init_script(

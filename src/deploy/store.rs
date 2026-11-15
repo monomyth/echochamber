@@ -51,6 +51,7 @@ impl Store {
         self.with_lock(|state| {
             if let Some(row) = state.deployments.iter_mut().find(|row| row.id == id) {
                 row.status = super::model::DeployStatus::Destroyed;
+                row.stream_key = None;
             }
             Ok(())
         })
@@ -160,6 +161,7 @@ mod tests {
             public_ip: Some("127.0.0.1".into()),
             ingest_server: Some("rtmp://127.0.0.1:1935/echochamber".into()),
             stream_key: Some("abc".into()),
+            project: None,
             expires_at_unix: 10,
             created_at_unix: 1,
             error: None,

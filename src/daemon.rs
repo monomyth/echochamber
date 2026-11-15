@@ -21,6 +21,8 @@ pub async fn serve(cfg: Config, config_path: std::path::PathBuf) -> Result<()> {
 
     let shared = Shared::new(cfg, config_path);
 
+    let reaper = spawn_reaper(&shared);
+
     let control = {
         let s = shared.clone();
         tokio::spawn(async move {
@@ -68,8 +70,42 @@ pub async fn serve(cfg: Config, config_path: std::path::PathBuf) -> Result<()> {
         let _ = pushers.await;
         let _ = asr.await;
         let _ = sampler.await;
+        if let Some(task) = reaper {
+            let _ = task.await;
+        }
     })
     .await;
     info!("echochamber stopped");
     Ok(())
+}
+
+fn spawn_reaper(shared: &Shared) -> Option<tokio::task::JoinHandle<()>> {
+    if std::env::var("ECHOCHAMBER_DISABLE_DEPLOY").ok().as_deref() == Some("1") {
+        return None;
+    }
+    let cfg = shared.config.borrow().clone();
+    if cfg.deploy.reap_interval_secs == 0 {
+        return None;
+    }
+    let interval = std::time::Duration::from_secs(cfg.deploy.reap_interval_secs);
+    let mut extras = Vec::new();
+    for target in cfg.deploy.targets {
+        match target.provider.parse::<crate::deploy::ProviderKind>() {
+            Ok(provider) => extras.push(crate::deploy::SweepTarget {
+                provider,
+                region: target.region,
+                project: target.project,
+            }),
+            Err(err) => tracing::warn!(
+                provider = %target.provider,
+                error = %err,
+                "ignoring deploy target"
+            ),
+        }
+    }
+    let stop = std::sync::Arc::clone(&shared.shutdown);
+    let service = std::sync::Arc::new(crate::deploy::DeployService::from_env());
+    Some(tokio::spawn(async move {
+        service.run_reaper(interval, extras, stop).await;
+    }))
 }

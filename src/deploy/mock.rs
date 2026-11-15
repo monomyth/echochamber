@@ -28,6 +28,7 @@ struct Inner {
     endpoint: Option<MockEndpoint>,
     pending_left: u32,
     fail_create: bool,
+    fail_lists: u32,
     instances: BTreeMap<String, CloudInstance>,
     plans: Vec<InstancePlan>,
     events: Vec<MockEvent>,
@@ -48,6 +49,7 @@ impl MockProvider {
                 endpoint: None,
                 pending_left: 0,
                 fail_create: false,
+                fail_lists: 0,
                 instances: BTreeMap::new(),
                 plans: Vec::new(),
                 events: Vec::new(),
@@ -68,6 +70,11 @@ impl MockProvider {
     pub fn fail_create(self) -> Self {
         self.inner.lock().expect("mock").fail_create = true;
         self
+    }
+
+    /// The next `n` list calls fail. The loop must keep going after that.
+    pub fn fail_next_lists(&self, n: u32) {
+        self.inner.lock().expect("mock").fail_lists = n;
     }
 
     pub fn insert(&self, instance: CloudInstance) {
@@ -183,6 +190,10 @@ impl CloudProvider for MockProvider {
     async fn list_managed(&self) -> Result<Vec<CloudInstance>, DeployError> {
         let mut inner = self.inner.lock().expect("mock");
         inner.events.push(MockEvent::List);
+        if inner.fail_lists > 0 {
+            inner.fail_lists -= 1;
+            return Err(DeployError::fail("mock list failed"));
+        }
         Ok(inner
             .instances
             .values()

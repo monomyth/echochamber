@@ -26,17 +26,18 @@
 <body>
 <main>
   <h1>Deploy a relay</h1>
-  <p>One temporary echochamber per stream. Hetzner is the cheap path. Lightsail is the fast snapshot path. This computer is free, and the stream dies if the link or the machine does.</p>
+  <p>One temporary echochamber per stream. Hetzner is the cheap path. Lightsail boots from a snapshot. Compute Engine works the same way and costs more in egress. This computer is free, and the stream dies if the link or the machine does.</p>
   <p class="warn">This page uses credentials already on this machine. A phone sends its own keys with each request and they are not saved here. A cloud deploy spends money. Leave this tab open; a fresh image can take several minutes, a snapshot usually less.</p>
 
   <form id="deploy">
     <label for="provider">Provider</label>
     <select id="provider" name="provider">
       <option value="hetzner">Hetzner Cloud</option>
-      <option value="aws-ec2">Amazon EC2</option>
-      <option value="gcp">Google Compute Engine</option>
       <option value="aws-lightsail">Amazon Lightsail</option>
+      <option value="gcp">Google Compute Engine</option>
       <option value="local">This computer</option>
+      <option value="aws-ec2">Amazon EC2</option>
+      <option value="fly">Fly.io (planned)</option>
     </select>
     <div class="row">
       <div>
@@ -91,10 +92,11 @@
         <label for="reap-provider">Provider</label>
         <select id="reap-provider">
           <option value="hetzner">Hetzner Cloud</option>
-          <option value="aws-ec2">Amazon EC2</option>
-          <option value="gcp">Google Compute Engine</option>
           <option value="aws-lightsail">Amazon Lightsail</option>
+          <option value="gcp">Google Compute Engine</option>
           <option value="local">This computer</option>
+          <option value="aws-ec2">Amazon EC2</option>
+          <option value="fly">Fly.io (planned)</option>
         </select>
       </div>
       <div>
