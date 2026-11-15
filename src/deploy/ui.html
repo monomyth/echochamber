@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>echochamber deploy</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font: 16px/1.45 system-ui, sans-serif; background: #16130f; color: #f3eadf; }
+    main { max-width: 46rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    h1 { font-size: 1.6rem; font-weight: 650; margin: 0 0 0.4rem; }
+    p, li { color: #d9cbb8; }
+    form, section { background: #241e18; border: 1px solid #3a3128; border-radius: 12px; padding: 1rem 1.1rem; margin: 1rem 0; }
+    label { display: block; margin: 0.7rem 0 0.2rem; font-size: 0.85rem; }
+    input, select { width: 100%; box-sizing: border-box; padding: 0.45rem 0.55rem; border-radius: 8px; border: 1px solid #5a4b3c; background: #100e0c; color: inherit; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
+    button { margin-top: 0.9rem; background: #e36a3a; color: #1a100c; border: 0; border-radius: 999px; padding: 0.55rem 1rem; font-weight: 650; cursor: pointer; }
+    button.quiet { background: transparent; color: #f3eadf; border: 1px solid #5a4b3c; }
+    .warn { color: #f0c27a; }
+    pre, .result { white-space: pre-wrap; word-break: break-all; background: #100e0c; padding: 0.8rem; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    td, th { text-align: left; padding: 0.35rem 0.2rem; border-bottom: 1px solid #3a3128; vertical-align: top; font-size: 0.92rem; }
+    @media (max-width: 640px) { .row { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Deploy a relay</h1>
+  <p>One temporary echochamber per stream. Hetzner is the cheap path. Lightsail is the fast snapshot path. This computer is free, and the stream dies if the link or the machine does.</p>
+  <p class="warn">Cloud credentials stay on this machine. This page never asks for them. A cloud deploy spends money. Leave this tab open; a fresh image can take several minutes, a snapshot usually less.</p>
+
+  <form id="deploy">
+    <label for="provider">Provider</label>
+    <select id="provider" name="provider">
+      <option value="hetzner">Hetzner Cloud</option>
+      <option value="aws-lightsail">Amazon Lightsail</option>
+      <option value="local">This computer</option>
+    </select>
+    <div class="row">
+      <div>
+        <label for="region">Region or location</label>
+        <input id="region" name="region" value="fsn1" autocomplete="off">
+      </div>
+      <div>
+        <label for="zone">Zone, if you need one</label>
+        <input id="zone" name="zone" placeholder="us-east-1a" autocomplete="off">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="image">Image or snapshot</label>
+        <input id="image" name="image" placeholder="blank uses the provider default" autocomplete="off">
+      </div>
+      <div>
+        <label for="size">Size</label>
+        <input id="size" name="size" placeholder="cx23 or small_3_0" autocomplete="off">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="ttl">Max lifetime, seconds</label>
+        <input id="ttl" name="ttl_secs" type="number" value="14400">
+      </div>
+      <div>
+        <label for="idle">Idle shutdown, seconds</label>
+        <input id="idle" name="idle_secs" type="number" value="600">
+      </div>
+    </div>
+    <label for="cidr">Who may send RTMP</label>
+    <input id="cidr" name="ingest_cidr" value="0.0.0.0/0" autocomplete="off">
+    <label><input id="prebuilt" name="prebuilt" type="checkbox" style="width:auto"> Snapshot already has echochamber and ffmpeg</label>
+    <button type="submit">Deploy relay</button>
+    <div id="result" class="result" hidden></div>
+  </form>
+
+  <section>
+    <h2>Relays</h2>
+    <table>
+      <thead><tr><th>Id</th><th>Status</th><th>Ingest</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Sweep orphans</h2>
+    <p>Deletes labeled relays whose deadline has passed, or that are already stopped. A dry run only lists them.</p>
+    <div class="row">
+      <div>
+        <label for="reap-provider">Provider</label>
+        <select id="reap-provider">
+          <option value="hetzner">Hetzner Cloud</option>
+          <option value="aws-lightsail">Amazon Lightsail</option>
+          <option value="local">This computer</option>
+        </select>
+      </div>
+      <div>
+        <label for="reap-region">Region</label>
+        <input id="reap-region" value="fsn1">
+      </div>
+    </div>
+    <label><input id="dry" type="checkbox" style="width:auto" checked> Dry run</label>
+    <button id="reap" class="quiet" type="button">Sweep</button>
+    <div id="reap-result" class="result" hidden></div>
+  </section>
+</main>
+<script>
+const result = document.querySelector("#result");
+const rows = document.querySelector("#rows");
+
+function show(node, text) {
+  node.hidden = false;
+  node.textContent = text;
+}
+
+async function api(path, options) {
+  const token = sessionStorage.getItem("echochamber-token") || "";
+  const headers = { "content-type": "application/json" };
+  if (token) headers.authorization = "Bearer " + token;
+  const response = await fetch(path, { headers, ...options });
+  const text = await response.text();
+  let body = text;
+  try { body = JSON.parse(text); } catch (e) {}
+  if (!response.ok) {
+    const message = body && body.error ? body.error : text;
+    throw new Error(message || response.statusText);
+  }
+  return body;
+}
+
+function formValue(form, name) {
+  const field = form.elements[name];
+  if (!field) return "";
+  if (field.type === "checkbox") return field.checked;
+  return field.value.trim();
+}
+
+document.querySelector("#provider").addEventListener("change", (event) => {
+  const region = document.querySelector("#region");
+  if (event.target.value === "hetzner") region.value = "fsn1";
+  if (event.target.value === "aws-lightsail") region.value = "us-east-1";
+  if (event.target.value === "local") region.value = "local";
+});
+
+document.querySelector("#deploy").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const payload = {
+    provider: formValue(form, "provider"),
+    region: formValue(form, "region"),
+    ttl_secs: Number(formValue(form, "ttl_secs")),
+    idle_secs: Number(formValue(form, "idle_secs")),
+    ingest_cidr: formValue(form, "ingest_cidr"),
+    prebuilt: formValue(form, "prebuilt")
+  };
+  const zone = formValue(form, "zone");
+  const image = formValue(form, "image");
+  const size = formValue(form, "size");
+  if (zone) payload.zone = zone;
+  if (image) payload.image = image;
+  if (size) payload.size = size;
+  show(result, "Waiting until the relay accepts a connection…");
+  try {
+    const record = await api("/deploy", { method: "POST", body: JSON.stringify(payload) });
+    const server = record.ingest_server || "";
+    const key = record.stream_key || "";
+    show(result, "Ready.\nOBS server: " + server + "\nOBS stream key: " + key);
+    await refresh();
+  } catch (error) {
+    show(result, error.message);
+  }
+});
+
+async function refresh() {
+  let list = [];
+  try { list = await api("/deployments"); } catch (error) { return; }
+  rows.replaceChildren();
+  for (const item of list) {
+    const tr = document.createElement("tr");
+    const ingest = item.status === "ready" && item.ingest_server
+      ? item.ingest_server + "/" + (item.stream_key || "")
+      : (item.error || "");
+    tr.innerHTML = "<td></td><td></td><td></td><td></td>";
+    tr.children[0].textContent = item.id;
+    tr.children[1].textContent = item.status;
+    tr.children[2].textContent = ingest;
+    if (item.status === "ready" || item.status === "provisioning" || item.status === "error") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "quiet";
+      button.textContent = "Tear down";
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          await api("/deployments/" + encodeURIComponent(item.id) + "/teardown", { method: "POST" });
+          await refresh();
+        } catch (error) {
+          show(result, error.message);
+        }
+      });
+      tr.children[3].append(button);
+    }
+    rows.append(tr);
+  }
+}
+
+document.querySelector("#reap").addEventListener("click", async () => {
+  const payload = {
+    provider: document.querySelector("#reap-provider").value,
+    region: document.querySelector("#reap-region").value.trim(),
+    dry_run: document.querySelector("#dry").checked
+  };
+  try {
+    const report = await api("/reap", { method: "POST", body: JSON.stringify(payload) });
+    show(document.querySelector("#reap-result"), JSON.stringify(report, null, 2));
+    await refresh();
+  } catch (error) {
+    show(document.querySelector("#reap-result"), error.message);
+  }
+});
+
+refresh();
+</script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CreateTaggedRelay",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:CreateInstances",
+        "lightsail:CreateInstancesFromSnapshot"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/echochamber-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "ManageTaggedRelays",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:DeleteInstance",
+        "lightsail:GetInstance",
+        "lightsail:PutInstancePublicPorts",
+        "lightsail:GetInstancePortStates",
+        "lightsail:TagResource"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/echochamber-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "ListRelaysAndCatalog",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:GetInstances",
+        "lightsail:GetRegions",
+        "lightsail:GetBlueprints",
+        "lightsail:GetBundles",
+        "lightsail:GetInstanceSnapshots"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

@@ -4,3 +4,5 @@
 *.ass
 echochamber_live.*
 .DS_Store
+/deployments.json
+/deployments.lock

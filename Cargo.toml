@@ -2,15 +2,23 @@
 name = "echochamber"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.94.1"
 description = "Local RTMP relay with multi-destination FFmpeg push and live Whisper subtitles"
 license = "MIT"
 repository = "https://github.com/monomyth/echochamber"
 
 [dependencies]
 anyhow = "1"
+async-trait = "0.1"
+# Ring TLS (legacy-client). Credential chain: env, web identity, shared config,
+# SSO, process, container, IMDS. No EC2 client; Lightsail is the AWS provider.
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "credentials-process", "sso", "legacy-client"] }
+aws-sdk-lightsail = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
 axum = { version = "0.8", features = ["macros"] }
+base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 directories = "5"
+getrandom = "0.2"
 libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rtmp-rs = "0.6"

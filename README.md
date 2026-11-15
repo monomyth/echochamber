@@ -228,6 +228,17 @@ The same actions exist as HTTP on port 8080, on this computer only, unless you c
 | `POST /stop` | `stop` |
 | `POST /push` with `{"url": "..."}` | `push --url` |
 
+## A relay that goes away
+
+You can also start one relay per stream and remove it when the stream ends. Hetzner Cloud is the one to use when bandwidth is the bill. Lightsail is there when you already have an Amazon snapshot and want it up in a minute or two. `local` runs the relay on this computer and costs nothing. Home internet can drop, and a sleeping laptop takes the stream with it.
+
+```bash
+export HETZNER_API_TOKEN=...   # this machine only; never in the request
+./target/release/echochamber deploy --provider hetzner --region fsn1
+```
+
+The command waits until the ingest port accepts a connection, then prints the OBS server and a fresh stream key. Open `http://127.0.0.1:8080/cloud` while `serve` is running for the same button. Details, the Lightsail IAM policy, and the Hetzner token scope are in [docs/cloud-deploy.md](docs/cloud-deploy.md).
+
 ## License
 
 [MIT](LICENSE). The waiting video and its music are part of this repo. You can use them with it.

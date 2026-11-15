@@ -43,6 +43,10 @@ pub struct IngestConfig {
 pub struct ControlConfig {
     #[serde(default = "default_control_bind")]
     pub bind: String,
+    /// When set, every control route except the deploy page requires
+    /// `Authorization: Bearer <token>`. Empty keeps the existing local API.
+    #[serde(default)]
+    pub token: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -220,6 +224,7 @@ impl Default for ControlConfig {
     fn default() -> Self {
         Self {
             bind: default_control_bind(),
+            token: String::new(),
         }
     }
 }
@@ -525,16 +530,30 @@ impl Config {
             format!("ingest.app         {}", self.ingest.app),
             format!("ingest.stream_key  {}", redact_key(&self.ingest.stream_key)),
             format!("control.bind       {}", self.control.bind),
+            format!(
+                "control.token      {}",
+                if self.control.token.is_empty() {
+                    "unset"
+                } else {
+                    "set"
+                }
+            ),
             format!("local play/publish {}", self.local_rtmp_url()),
         ];
         lines.push(destination_line(
             "youtube",
-            self.platforms.youtube.as_ref().map(|p| (p.enabled, p.stream_key.as_str())),
+            self.platforms
+                .youtube
+                .as_ref()
+                .map(|p| (p.enabled, p.stream_key.as_str())),
             self.youtube_publish_url(),
         ));
         lines.push(destination_line(
             "x",
-            self.platforms.x.as_ref().map(|p| (p.enabled, p.stream_key.as_str())),
+            self.platforms
+                .x
+                .as_ref()
+                .map(|p| (p.enabled, p.stream_key.as_str())),
             self.x_publish_url(),
         ));
         lines.push(destination_line(
@@ -679,9 +698,11 @@ app = "echochamber"
 stream_key = "live"
 
 [control]
-# Local web address used by: status, reload, stop, push
+# Local web address used by: status, reload, stop, push, deploy
 # Open it on the network for this run with: serve --control-bind 0.0.0.0:8080
+# Leave token empty on this machine. A cloud relay sets its own token.
 bind = "127.0.0.1:8080"
+token = ""
 
 [platforms.youtube]
 enabled = false
@@ -876,7 +897,10 @@ stream_key = "xkey9999"
             summary.contains("youtube            enabled, but stream_key is empty"),
             "{summary}"
         );
-        assert!(summary.contains("x                  (disabled)"), "{summary}");
+        assert!(
+            summary.contains("x                  (disabled)"),
+            "{summary}"
+        );
         assert!(cfg.configured_destinations().is_empty());
     }
 
